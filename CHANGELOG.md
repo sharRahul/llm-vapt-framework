@@ -10,6 +10,7 @@ All notable changes to this project will be documented in this file.
 - CVE correlation for findings: a new online lookup (`integrations/cve_lookup.py`, `POST /api/findings/cve`) queries NVD by keyword/CWE (and OSV when a package is named) and surfaces matching CVE/advisory records in the WebUI intelligence panel. When a lookup succeeds with no match it flags the finding as a *candidate novel/zero-day* for human verification — never asserting a zero-day automatically. Best-effort and offline-safe (reports `online: false` instead of failing).
 - Optional in-app assistant model (`pip install -e .[assistant]`): "Ask VulnoraIQ" and AI finding explanations now run a small GGUF model locally via `llama-cpp-python` (CPU or GPU), downloaded once on first use and cached — no Ollama or external API. Answers are grounded in the bundled OWASP notes and the selected finding, with safe `web_fetch` (SSRF-guarded) and allowlisted `read_docs` tools. Degrades gracefully to templated guidance when the model is not installed. New `POST /api/assistant/explain` endpoint; see `docs/ASSISTANT_MODEL.md` (incl. a path to fine-tune your own model on a 16 GB GPU).
 - Agent Lab: a per-project **Delete** button (managed projects only; mapped projects shown read-only).
+- Direct target authoring in the WebUI **Targets** workspace: the target editor now accepts a target type, base URL, endpoint path, model, response extraction path, and request body template for any direct LLM, RAG, or agent HTTP endpoint — no Agent Lab/Docker deploy required. Target IDs are editable when creating a new target and fixed once saved. Added a **Model set** readiness guardrail for chat/Ollama types. Targets backed by a deployed Agent Lab container still take their base URL/endpoint from the container and remain locked. This restores end-to-end LLM/agent testing for systems the operator already runs.
 
 ### Changed
 
@@ -26,6 +27,8 @@ All notable changes to this project will be documented in this file.
 - Agent Lab project analysis no longer returns HTTP 500 for Flask projects that use a bare `@app.route("/")` without `methods=` (an optional regex group returned `None`, causing `AttributeError` in endpoint detection).
 - Agent Lab deployment removal (`POST /api/agent-lab/deployments/<id>/remove`) now resolves the identifier against the deployment registry (accepting `deployment_id`, `project_id`, or `container_name`) and reports `removed: true` only when a matching container actually existed. Previously a stale/wrong identifier could report success while leaving a container running, because `docker rm -f` exits `0` for a missing container.
 - WebUI console no longer loads fonts from the Google Fonts CDN. The stylesheet `@import` and `preconnect` hints were removed so the console renders with bundled/system fonts, works offline, and no longer triggers a Content-Security-Policy console error.
+- Content-Security-Policy now includes `font-src 'self' data:`, so bundled console fonts (including inlined `data:` woff2 subsets) load without a CSP violation in the browser console.
+- The WebUI now ships an inline SVG favicon, removing the two `GET /favicon.ico` 404s that appeared on every page load.
 
 ### Removed
 

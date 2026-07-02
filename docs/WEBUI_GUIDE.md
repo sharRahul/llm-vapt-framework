@@ -18,7 +18,7 @@ Open <http://localhost:8787>.
 | Area | Current behaviour |
 | --- | --- |
 | Dashboard / overview | Shows high-level security and assessment status using React console data models and live backend scan progress. |
-| Target management | Loads configured/runtime targets, supports search and environment filters, shows readiness metrics and status pills, validates targets, saves/deletes runtime targets, launches authorised scans, and refreshes recent jobs. |
+| Target management | Loads configured/runtime targets, supports search and environment filters, shows readiness metrics and status pills, validates targets, saves/deletes runtime targets, launches authorised scans, and refreshes recent jobs. Direct LLM, RAG, and agent HTTP endpoints are authored in place (target type, base URL, endpoint path, model, response extraction path, request body template). Targets backed by a deployed Agent Lab container keep their base URL/endpoint locked to the container. |
 | Project Importer / Agent Lab | Embeds the experimental `/agent-lab` workflow for importing real agent projects by local folder upload, ZIP upload, Git import, or mapped folder refresh; configuring providers; building/running containers; creating targets; and launching authorised scans. |
 | Findings and intelligence | Provides analyst-facing panels for findings, triage context, persisted remediation/status actions, finding history, and assistant-backed analysis. |
 | Assessment options | Uses configured profiles and single-test options from `config/attack_profiles.yaml`. |
@@ -50,8 +50,8 @@ Current future maturity work is focused on enterprise identity, SIEM/SOAR integr
 ## Operator flow
 
 1. Start Desktop Mode or Docker Lab Mode and open the WebUI.
-2. Go to the target workspace for existing targets, or Project Importer / Agent Lab for imported real agents.
-3. Import the agent through local folder upload, ZIP upload, Git import, or mapped folder refresh.
+2. Go to the target workspace to author a direct LLM/RAG/agent HTTP endpoint (**Add**, then set target type, base URL, endpoint path, and response extraction path), or use Project Importer / Agent Lab for imported real agents.
+3. For imported agents, import through local folder upload, ZIP upload, Git import, or mapped folder refresh.
 4. Search or filter for the target or project.
 5. Validate target connectivity, or build/run an Agent Lab project to generate a target.
 6. Review the readiness checklist.

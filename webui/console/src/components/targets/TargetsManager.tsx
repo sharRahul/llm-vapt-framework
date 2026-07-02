@@ -20,6 +20,7 @@ import { cn } from "@/lib/utils";
 
 const ENVIRONMENTS = ["local", "lab", "internal", "production-like"];
 const SCAN_PROFILES = ["baseline", "rag", "agent", "full", "owasp-aitg-full"];
+const TARGET_TYPES = ["http_json", "chat_completions", "ollama_generate", "webhook_json", "rag_query", "agent_tool_loop"];
 
 const defaultTarget = (): TargetConfig => ({
   name: "New authorised AI target",
@@ -304,10 +305,17 @@ export function TargetsManager() {
   }, [dockerBaseUrl]);
 
   const isExternal = draft.allow_external === true;
+  // Targets backed by a deployed Agent Lab container get their Base URL from Docker and
+  // are locked. Direct LLM/RAG/agent HTTP endpoints are authored here and stay editable.
+  const dockerBacked = Boolean(dockerBaseUrl);
+  const endpointEditable = !dockerBacked;
+  const idEditable = !selected;
+  const needsModel = ["chat_completions", "ollama_generate"].includes(draft.type);
   const safetyChecklist = [
     { label: "Authorisation gate", ok: draft.authorisation_required !== false },
-    { label: "Base URL from Docker", ok: Boolean(lockedBaseUrl) },
+    { label: dockerBacked ? "Base URL from Docker" : "Base URL configured", ok: Boolean(lockedBaseUrl) },
     { label: "Endpoint configured", ok: Boolean(draft.endpoint_path) },
+    { label: "Model set", ok: !needsModel || Boolean(draft.model) },
   ];
 
   return (
@@ -375,23 +383,37 @@ export function TargetsManager() {
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(300px,360px)]">
             <div className="space-y-4">
               <div className="grid gap-4 lg:grid-cols-2">
-                <Field label="Target ID"><input value={draftId} readOnly tabIndex={-1} aria-readonly="true" className="input font-mono cursor-not-allowed opacity-70" /></Field>
-                <Field label="Display name"><input value={draft.name || ""} onChange={(e) => setDraft({ ...draft, name: e.target.value })} className="input" /></Field>
-                <Field label="Base URL">
-                  <input value={lockedBaseUrl} readOnly tabIndex={-1} aria-readonly="true" className="input font-mono cursor-not-allowed opacity-70" placeholder="Set automatically when an agent is deployed" />
-                  <span className="mt-1 block text-[11px] text-muted-foreground">{dockerBaseUrl ? "From the deployed agent container." : "Auto-set from Docker on deploy — not edited here."}</span>
+                <Field label="Target ID">
+                  <input value={draftId} onChange={(e) => setDraftId(e.target.value.replace(/[^A-Za-z0-9_-]/g, "_"))} readOnly={!idEditable} tabIndex={idEditable ? 0 : -1} aria-readonly={!idEditable} className={cn("input font-mono", !idEditable && "cursor-not-allowed opacity-70")} placeholder="my_llm_endpoint" />
+                  {idEditable ? <span className="mt-1 block text-[11px] text-muted-foreground">Letters, numbers, hyphens, underscores. Fixed once saved.</span> : null}
                 </Field>
-                <Field label="Endpoint path"><input value={draft.endpoint_path || ""} readOnly tabIndex={-1} aria-readonly="true" className="input font-mono cursor-not-allowed opacity-70" placeholder="Set on deploy" /></Field>
+                <Field label="Display name"><input value={draft.name || ""} onChange={(e) => setDraft({ ...draft, name: e.target.value })} className="input" /></Field>
+                <Field label="Target type">
+                  <select value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value })} disabled={dockerBacked} className={cn("input", dockerBacked && "cursor-not-allowed opacity-70")}>
+                    {TARGET_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}
+                  </select>
+                </Field>
+                <Field label="Environment">
+                  <select value={draft.environment || "local"} onChange={(e) => setDraft({ ...draft, environment: e.target.value })} className="input">
+                    {ENVIRONMENTS.map((env) => <option key={env} value={env}>{env}</option>)}
+                  </select>
+                </Field>
+                <Field label="Base URL">
+                  <input value={lockedBaseUrl} onChange={(e) => setDraft({ ...draft, base_url: e.target.value })} readOnly={!endpointEditable} tabIndex={endpointEditable ? 0 : -1} aria-readonly={!endpointEditable} className={cn("input font-mono", !endpointEditable && "cursor-not-allowed opacity-70")} placeholder="http://127.0.0.1:8000" />
+                  <span className="mt-1 block text-[11px] text-muted-foreground">{dockerBacked ? "From the deployed agent container." : "Loopback/private host of the AI system under test."}</span>
+                </Field>
+                <Field label="Endpoint path"><input value={draft.endpoint_path || ""} onChange={(e) => setDraft({ ...draft, endpoint_path: e.target.value })} readOnly={!endpointEditable} tabIndex={endpointEditable ? 0 : -1} aria-readonly={!endpointEditable} className={cn("input font-mono", !endpointEditable && "cursor-not-allowed opacity-70")} placeholder="/v1/chat/completions" /></Field>
+                {needsModel ? <Field label="Model"><input value={draft.model || ""} onChange={(e) => setDraft({ ...draft, model: e.target.value })} className="input font-mono" placeholder="gpt-4o-mini / llama3" /></Field> : null}
                 <Field label="Auth token env var"><input value={draft.auth_token_env || draft.token_env_var || ""} onChange={(e) => setDraft({ ...draft, auth_token_env: e.target.value, token_env_var: undefined })} className="input font-mono" placeholder="LLM_VAPT_TARGET_TOKEN" /></Field>
               </div>
               <div className="grid gap-4 lg:grid-cols-2">
-                <Field label="Response extraction path"><input value={draft.response_extraction_path || ""} readOnly tabIndex={-1} aria-readonly="true" className="input font-mono cursor-not-allowed opacity-70" placeholder="Set on deploy" /></Field>
-                <Field label="Request body template JSON"><textarea value={bodyText} readOnly tabIndex={-1} aria-readonly="true" className="input min-h-32 font-mono text-xs cursor-not-allowed opacity-70" /></Field>
+                <Field label="Response extraction path"><input value={draft.response_extraction_path || ""} onChange={(e) => setDraft({ ...draft, response_extraction_path: e.target.value })} readOnly={!endpointEditable} tabIndex={endpointEditable ? 0 : -1} aria-readonly={!endpointEditable} className={cn("input font-mono", !endpointEditable && "cursor-not-allowed opacity-70")} placeholder="choices.0.message.content" /></Field>
+                <Field label="Request body template JSON"><textarea value={bodyText} onChange={(e) => setBodyText(e.target.value)} readOnly={!endpointEditable} tabIndex={endpointEditable ? 0 : -1} aria-readonly={!endpointEditable} className={cn("input min-h-32 font-mono text-xs", !endpointEditable && "cursor-not-allowed opacity-70")} placeholder={'{ "prompt": "{{prompt}}" }'} /></Field>
               </div>
               <div className="grid gap-4">
                 <Toggle checked={draft.authorisation_required !== false} onChange={(checked) => setDraft({ ...draft, authorisation_required: checked })} title="Authorisation required" body="Required for all real targets." />
               </div>
-              <p className="text-[11px] text-muted-foreground">Request body, response path, endpoint and base URL are configured when you deploy the agent (Agents tab) and shown read-only here.</p>
+              <p className="text-[11px] text-muted-foreground">{dockerBacked ? "Endpoint, base URL, and response path come from the deployed agent container (Agents tab) and are locked here." : "Configure a direct LLM, RAG, or agent HTTP endpoint here. Leave the request body as {{prompt}} to use the built-in template for the selected type. Use empty {} to send the type default."}</p>
             </div>
 
             <aside className="space-y-4">

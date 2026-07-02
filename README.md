@@ -178,6 +178,21 @@ In Desktop Mode, VulnoraIQ scans sandboxed agents through published localhost en
 
 Agent Lab remains experimental because it builds and runs operator-provided code. Import and test only code and systems you own or are explicitly authorised to assess.
 
+## Configure a direct target
+
+You do not need Agent Lab to test an AI system you already run. In the **Targets** workspace, click **Add** and author a direct endpoint:
+
+| Field | Example |
+| --- | --- |
+| Target type | `http_json`, `chat_completions`, `ollama_generate`, `webhook_json`, `rag_query`, `agent_tool_loop` |
+| Base URL | `http://127.0.0.1:8000` (loopback/private host of the system under test) |
+| Endpoint path | `/v1/chat/completions` |
+| Model | `gpt-4o-mini` / `llama3` (chat/Ollama types) |
+| Response extraction path | `choices.0.message.content` |
+| Request body template | `{ "prompt": "{{prompt}}" }` (or `{}` to use the type default) |
+
+Use **Test connectivity** to validate, then **Start authorised scan**. External (non-loopback/non-private) hosts are blocked unless `allow_external` is explicitly enabled for a system you own or are authorised to assess. The CLI reads the same targets from `config/targets.yaml`.
+
 ## Source/package local development
 
 Install from a source checkout:
