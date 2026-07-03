@@ -90,7 +90,12 @@ def test_assistant_backend_and_react_panel_are_live_wired() -> None:
     panel = Path("webui/console/src/components/intelligence/AskVulnoraIQChat.tsx").read_text(encoding="utf-8")
     assert response["role"] == "assistant"
     assert response["model"] == "nora-assistant"
-    assert "Validation approach" in str(response["content"])
+    # Live-wired backends return a substantive, on-topic reply. Assert the shape
+    # of a real response rather than one templated phrase, so the test holds both
+    # when the local GPU/CPU model is loaded and on the deterministic fallback.
+    content = str(response["content"]).strip()
+    assert len(content) > 20
+    assert "valid" in content.lower()
     assert "mockAssistantReply" not in panel
     assert "window.setTimeout" not in panel
     assert "/api/assistant/chat" in panel

@@ -55,13 +55,30 @@ release = [
 ]
 # Optional in-app assistant model (Ask VulnoraIQ + richer finding explanations).
 # Runs a small GGUF locally via llama.cpp; weights are downloaded on first use.
-# Install matrix (validated for Nora's Qwen3 GGUF):
-# - NVIDIA CUDA 12.4: `pip install llama-cpp-python==0.3.31 --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124 --only-binary=:all:`
-# - CPU-only Windows/Linux: `pip install llama-cpp-python==0.3.19 --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu --only-binary=:all:`
-#   Newer generic Windows CPU wheels (for example 0.3.30) hit `0xc000001d` on AVX2-class consumer CPUs.
+# The assistant loads on GPU by default (n_gpu_layers=-1) and falls back to CPU.
+#
+# GPU (recommended, NVIDIA CUDA 12.x):
+#   pip install "llama-cpp-python==0.3.31" --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124 --only-binary=:all:
+#   pip install -e ".[assistant-cuda]"
+#   The CUDA wheel links cudart/cublas/nvrtc; `assistant-cuda` supplies those via
+#   the nvidia-*-cu12 pip packages, so no system CUDA toolkit is required.
+#   assistant_llm registers site-packages/nvidia/*/bin on the Windows DLL path.
+#
+# CPU-only (no NVIDIA GPU):
+#   pip install "llama-cpp-python==0.3.19" --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu --only-binary=:all:
+#   Newer generic Windows CPU wheels (for example 0.3.30) hit `0xc000001d` on
+#   AVX2-class consumer CPUs; pin 0.3.19 from the cpu index.
 # - macOS Metal / MLX: TODO, not implemented yet.
 assistant = [
   "llama-cpp-python>=0.3.19"
+]
+# GPU runtime for the CUDA llama-cpp-python wheel. Pair with the cu124 wheel
+# above (installed from the llama-cpp-python CUDA index, not PyPI).
+assistant-cuda = [
+  "llama-cpp-python>=0.3.31",
+  "nvidia-cuda-runtime-cu12>=12.4",
+  "nvidia-cublas-cu12>=12.4",
+  "nvidia-cuda-nvrtc-cu12>=12.4"
 ]
 
 [project.scripts]

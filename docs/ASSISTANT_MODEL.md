@@ -36,17 +36,32 @@ use. No model file is committed to the repository.
 
 ### CPU vs GPU and wheel compatibility
 
-`llama-cpp-python` is a compiled package, so the wheel must match your hardware:
+`llama-cpp-python` is a compiled package, so the wheel must match your hardware.
+The assistant loads on **GPU by default** (`n_gpu_layers=-1`) and falls back to
+CPU automatically (`VULNORAIQ_ASSISTANT_GPU_LAYERS=auto`).
 
-- **GPU (recommended if you have one):** install a CUDA/Metal build, e.g.
-  `pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124`
-  then set `VULNORAIQ_ASSISTANT_GPU_LAYERS=-1` (the default `auto` already tries
-  GPU first and falls back to CPU).
-- **CPU:** `pip install llama-cpp-python --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu`.
-- **Older CPUs without AVX2** (symptom: `Windows Error 0xc000001d` /
-  `Illegal instruction` on load): the generic prebuilt wheels assume AVX2. Build
-  for your CPU instead: `CMAKE_ARGS="-DLLAMA_AVX2=OFF" pip install llama-cpp-python --no-binary :all:`
-  (requires a C/C++ toolchain), or use the GPU wheel above.
+- **GPU (recommended, NVIDIA CUDA 12.x):**
+
+  ```bash
+  pip install "llama-cpp-python==0.3.31" --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cu124 --only-binary=:all:
+  pip install -e ".[assistant-cuda]"
+  ```
+
+  The CUDA wheel dynamically links `cudart`/`cublas`/`nvrtc`. The `assistant-cuda`
+  extra installs those through the `nvidia-*-cu12` pip packages, so **no system
+  CUDA toolkit is required**. On Windows, `webui/assistant_llm.py` adds
+  `site-packages/nvidia/*/bin` to the DLL search path before importing llama.cpp,
+  so the GPU wheel finds its runtime with no manual `PATH` setup. Verify with
+  `verbose=True`: the log shows `found 1 CUDA devices` and layers `assigned to
+  device CUDA0`.
+- **CPU (no NVIDIA GPU):**
+  `pip install "llama-cpp-python==0.3.19" --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu --only-binary=:all:`.
+- **Older / AVX2-class CPUs** (symptom: `Windows Error 0xc000001d` /
+  `Illegal instruction` on load): generic prebuilt wheels — including newer
+  Windows CPU wheels such as `0.3.30` — assume an instruction set the CPU lacks.
+  Pin `0.3.19` from the `cpu` index above, build for your CPU
+  (`CMAKE_ARGS="-DLLAMA_AVX2=OFF" pip install llama-cpp-python --no-binary :all:`,
+  needs a C/C++ toolchain), or use the GPU wheel.
 
 When the runtime or weights are unavailable, VulnoraIQ logs the reason and uses
 templated guidance — the WebUI keeps working.

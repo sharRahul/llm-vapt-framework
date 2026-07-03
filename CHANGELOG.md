@@ -29,6 +29,7 @@ All notable changes to this project will be documented in this file.
 - WebUI console no longer loads fonts from the Google Fonts CDN. The stylesheet `@import` and `preconnect` hints were removed so the console renders with bundled/system fonts, works offline, and no longer triggers a Content-Security-Policy console error.
 - Content-Security-Policy now includes `font-src 'self' data:`, so bundled console fonts (including inlined `data:` woff2 subsets) load without a CSP violation in the browser console.
 - The WebUI now ships an inline SVG favicon, removing the two `GET /favicon.ico` 404s that appeared on every page load.
+- Assistant model now loads on GPU by default with automatic CPU fallback. The CUDA `llama-cpp-python` wheel links `cudart`/`cublas`/`nvrtc`, which the `nvidia-*-cu12` pip packages provide; `webui/assistant_llm.py` now registers `site-packages/nvidia/*/bin` on the Windows DLL search path so `ggml-cuda.dll` finds its runtime with no system CUDA toolkit or manual `PATH` setup. Previously the only installed wheel was a CPU build that crashed with `0xc000001d`, so the assistant always dropped to templated guidance. New `assistant-cuda` extra pins the CUDA runtime packages; see `docs/ASSISTANT_MODEL.md`.
 
 ### Removed
 

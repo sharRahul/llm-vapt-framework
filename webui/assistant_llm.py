@@ -76,6 +76,29 @@ def _register_windows_dll_dir(path: Path) -> None:
         os.environ["PATH"] = resolved + os.pathsep + current_path if current_path else resolved
 
 
+def _register_nvidia_pip_runtime() -> None:
+    """Register CUDA runtime DLLs shipped by the ``nvidia-*-cu12`` pip packages.
+
+    The prebuilt CUDA ``llama-cpp-python`` wheels dynamically link cudart/cublas/
+    nvrtc. When CUDA is provided through pip (``nvidia-cuda-runtime-cu12``,
+    ``nvidia-cublas-cu12``) instead of a system CUDA toolkit, those DLLs live in
+    ``site-packages/nvidia/<component>/bin`` and are not on the default search
+    path, so ``ggml-cuda.dll`` fails to load and GPU offload silently falls back
+    to CPU. Add each component's ``bin`` directory before importing llama.cpp.
+    """
+    try:
+        import nvidia  # type: ignore
+    except Exception:
+        return
+    for root in getattr(nvidia, "__path__", []):
+        try:
+            components = sorted(Path(root).iterdir())
+        except OSError:
+            continue
+        for component in components:
+            _register_windows_dll_dir(component / "bin")
+
+
 def _prepare_windows_llama_runtime() -> None:
     """Expose bundled DLL directories before importing llama.cpp on Windows."""
     if os.name != "nt":
@@ -83,6 +106,7 @@ def _prepare_windows_llama_runtime() -> None:
     for name, value in os.environ.items():
         if name.startswith("CUDA_PATH") and value:
             _register_windows_dll_dir(Path(value) / "bin")
+    _register_nvidia_pip_runtime()
     try:
         spec = importlib.util.find_spec("llama_cpp")
     except Exception:
