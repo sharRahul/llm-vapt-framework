@@ -1,14 +1,32 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FolderUp, GitBranch, Loader2, RefreshCw, Trash2, FileCode2, HardDrive } from "lucide-react";
+import {
+  FolderUp,
+  GitBranch,
+  Loader2,
+  RefreshCw,
+  Trash2,
+  FileCode2,
+  HardDrive,
+  Rocket,
+  ShieldAlert,
+  CheckCircle2,
+  Activity,
+  ScanSearch,
+  Server,
+  ChevronDown,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 /**
- * Projects — import and manage AI agent codebases for testing in the Agent Lab.
+ * Projects — import an AI agent codebase, then deploy it as a working, scannable
+ * VulnoraIQ target without leaving the console.
  *
  * Replaces the old `<iframe src="/agent-lab">`, which the app's own
  * `frame-ancestors 'none'` / `X-Frame-Options: DENY` headers always blocked (the
  * page rendered blank). This panel talks to the same `/api/agent-lab` endpoints
- * directly, so no self-framing is needed.
+ * directly, so no self-framing is needed, and it carries the full
+ * import → analyse → deploy → auto-target → scan flow so there is no dead end
+ * after import.
  */
 
 interface AgentProject {
@@ -22,9 +40,63 @@ interface AgentProject {
   writable?: boolean;
 }
 
+interface EndpointContract {
+  method?: string;
+  path?: string;
+  param_style?: string;
+  param_key?: string;
+  response_shape?: string;
+  response_path?: string;
+}
+
+interface ProjectAnalysis {
+  id: string;
+  framework?: string;
+  ports?: number[];
+  endpoints?: EndpointContract[];
+  /** Authoritative inference endpoint chosen by the backend ranking. */
+  selected_endpoint?: EndpointContract | null;
+  has_dockerfile?: boolean;
+  env_vars?: { name: string; required?: boolean; secret?: boolean }[];
+  file_count?: number;
+}
+
+interface ProviderPreset {
+  display_name?: string;
+  requires_api_key?: boolean;
+  default_base_url?: string;
+  default_model?: string;
+}
+
+interface DeploymentResult {
+  deployed?: boolean;
+  project_id?: string;
+  deployment_mode?: string;
+  status?: string;
+  base_url?: string;
+  health_status?: string;
+  container_port?: number | null;
+  host_port?: number | null;
+  target_ids?: string[];
+  endpoint_contract?: EndpointContract;
+}
+
 interface AgentLabState {
   projects: AgentProject[];
   run_mode?: string;
+  provider_presets?: Record<string, ProviderPreset>;
+}
+
+type DeployMode = "container" | "external" | "hybrid";
+type TargetType = "http_json" | "chat_completions";
+
+interface ProjectImporterProps {
+  /** Reload the app-level target list after a deploy creates one. */
+  onTargetsChanged?: () => void;
+  /** Run a baseline scan against a freshly-created target and switch to Overview. */
+  onRunScan?: (targetId: string) => void;
+  /** Switch the console to another tab (e.g. Targets). */
+  onNavigate?: (view: "overview" | "workspace" | "targets" | "agents" | "projects") => void;
 }
 
 async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -66,9 +138,22 @@ function sanitiseId(value: string): string {
     .slice(0, 64);
 }
 
-export function ProjectImporter() {
+/**
+ * The inference endpoint to preview. Prefer the backend's authoritative
+ * `selected_endpoint` (same ranking the deploy path uses) and fall back to the
+ * first endpoint only if an older backend did not provide it — so the preview
+ * never disagrees with what actually gets registered.
+ */
+function previewEndpoint(analysis: ProjectAnalysis | null): EndpointContract | null {
+  if (!analysis) return null;
+  if (analysis.selected_endpoint) return analysis.selected_endpoint;
+  return analysis.endpoints?.[0] || null;
+}
+
+export function ProjectImporter({ onTargetsChanged, onRunScan, onNavigate }: ProjectImporterProps) {
   const [projects, setProjects] = useState<AgentProject[]>([]);
   const [runMode, setRunMode] = useState<string>("");
+  const [providerPresets, setProviderPresets] = useState<Record<string, ProviderPreset>>({});
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string>("");
   const [error, setError] = useState<string>("");
@@ -77,6 +162,20 @@ export function ProjectImporter() {
   const [gitBranch, setGitBranch] = useState("");
   const folderInputRef = useRef<HTMLInputElement>(null);
 
+  // Per-project deploy panel state.
+  const [selectedId, setSelectedId] = useState<string>("");
+  const [analysis, setAnalysis] = useState<ProjectAnalysis | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [deployMode, setDeployMode] = useState<DeployMode>("container");
+  const [targetType, setTargetType] = useState<TargetType>("http_json");
+  const [externalBaseUrl, setExternalBaseUrl] = useState("");
+  const [providerKind, setProviderKind] = useState("");
+  const [providerBaseUrl, setProviderBaseUrl] = useState("");
+  const [providerModel, setProviderModel] = useState("");
+  const [providerApiKey, setProviderApiKey] = useState("");
+  const [authAck, setAuthAck] = useState(false);
+  const [deployment, setDeployment] = useState<DeploymentResult | null>(null);
+
   const refresh = useCallback(async () => {
     setLoading(true);
     setError("");
@@ -84,6 +183,7 @@ export function ProjectImporter() {
       const data = await api<AgentLabState>("/api/agent-lab");
       setProjects(data.projects || []);
       setRunMode(data.run_mode || "");
+      setProviderPresets(data.provider_presets || {});
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load projects.");
     } finally {
@@ -94,6 +194,37 @@ export function ProjectImporter() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  const selectProject = useCallback(async (id: string) => {
+    setSelectedId(id);
+    setDeployment(null);
+    setError("");
+    setNotice("");
+    setAnalysis(null);
+    // Reset the deploy form so nothing (deploy mode, external URL, provider, or
+    // the authorization acknowledgement) leaks from the previously selected
+    // project into this one.
+    setDeployMode("container");
+    setTargetType("http_json");
+    setExternalBaseUrl("");
+    setProviderKind("");
+    setProviderBaseUrl("");
+    setProviderModel("");
+    setProviderApiKey("");
+    setAuthAck(false);
+    setAnalyzing(true);
+    try {
+      const data = await api<ProjectAnalysis>(`/api/agent-lab/projects/${encodeURIComponent(id)}/analyze`);
+      setAnalysis(data);
+      // Container mode needs a Dockerfile or a generatable framework; if neither,
+      // nudge toward External mode so the flow never dead-ends.
+      if (!data.has_dockerfile && !data.framework) setDeployMode("external");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Analysis failed.");
+    } finally {
+      setAnalyzing(false);
+    }
+  }, []);
 
   const importFolder = useCallback(async (files: FileList) => {
     if (!files.length) return;
@@ -110,8 +241,6 @@ export function ProjectImporter() {
       let total = 0;
       for (const file of Array.from(files)) {
         const rel = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name;
-        // Root the archive at the project contents (drop the chosen folder's own
-        // top-level name), and skip noise that bloats the upload.
         const inner = rel.split("/").slice(1).join("/") || file.name;
         if (/(^|\/)(\.git|node_modules|__pycache__|\.venv)(\/|$)/.test(rel)) continue;
         total += file.size;
@@ -127,13 +256,14 @@ export function ProjectImporter() {
       );
       setNotice(`Imported “${result.project_id}” from folder.`);
       await refresh();
+      await selectProject(result.project_id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Folder import failed.");
     } finally {
       setBusy("");
       if (folderInputRef.current) folderInputRef.current.value = "";
     }
-  }, [refresh]);
+  }, [refresh, selectProject]);
 
   const importGit = useCallback(async () => {
     if (!gitUrl.trim()) return;
@@ -151,12 +281,13 @@ export function ProjectImporter() {
       setGitUrl("");
       setGitBranch("");
       await refresh();
+      await selectProject(result.project_id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Git import failed.");
     } finally {
       setBusy("");
     }
-  }, [gitUrl, gitBranch, refresh]);
+  }, [gitUrl, gitBranch, refresh, selectProject]);
 
   const removeProject = useCallback(async (id: string) => {
     setError("");
@@ -166,13 +297,84 @@ export function ProjectImporter() {
       const token = await csrfToken();
       await postJson(`/api/agent-lab/projects/${encodeURIComponent(id)}/delete`, {}, token);
       setNotice(`Removed “${id}”.`);
+      if (selectedId === id) { setSelectedId(""); setAnalysis(null); setDeployment(null); }
       await refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not remove project.");
     } finally {
       setBusy("");
     }
-  }, [refresh]);
+  }, [refresh, selectedId]);
+
+  const onProviderKind = useCallback((kind: string) => {
+    setProviderKind(kind);
+    const preset = providerPresets[kind];
+    if (preset) {
+      setProviderBaseUrl(preset.default_base_url || "");
+      setProviderModel(preset.default_model || "");
+    }
+  }, [providerPresets]);
+
+  const deploy = useCallback(async () => {
+    if (!selectedId) return;
+    setError("");
+    setNotice("");
+    if (deployMode !== "container" && !authAck) {
+      setError("Confirm you are authorized to test this endpoint / external model before deploying.");
+      return;
+    }
+    if (deployMode === "external" && !externalBaseUrl.trim()) {
+      setError("External endpoint mode needs a base URL (e.g. http://127.0.0.1:9000).");
+      return;
+    }
+    if (deployMode === "hybrid" && !providerKind && !providerBaseUrl.trim()) {
+      setError("Hybrid mode needs an external model provider — select one or set its base URL.");
+      return;
+    }
+    setBusy("deploy");
+    setDeployment(null);
+    try {
+      const firstPort = analysis?.ports?.[0] || 8000;
+      const body = {
+        deployment_mode: deployMode,
+        authorization_acknowledged: authAck,
+        base_url: externalBaseUrl.trim(),
+        provider: deployMode === "hybrid" ? { kind: providerKind, base_url: providerBaseUrl, model: providerModel, api_key: providerApiKey } : {},
+        env: {},
+        gpu: { mode: "cpu", device_ids: "" },
+        ports: [firstPort],
+        publish_ports: true,
+        // Let the backend derive method/endpoint/body/response from the detected
+        // contract — this is the auto-target behaviour we want to showcase.
+        target: { type: targetType, safety_profile: "local_lab_safe" },
+      };
+      const token = await csrfToken();
+      const result = await postJson<DeploymentResult>(
+        `/api/agent-lab/projects/${encodeURIComponent(selectedId)}/deploy`,
+        body,
+        token,
+      );
+      if (!result.deployed || !(result.target_ids || []).length) {
+        throw new Error("Deploy did not register a target. Check the deployment logs and retry.");
+      }
+      setDeployment(result);
+      setNotice(`Deployed “${result.project_id}” — created target ${(result.target_ids || []).join(", ")}.`);
+      onTargetsChanged?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Deploy failed.");
+    } finally {
+      setBusy("");
+    }
+  }, [selectedId, deployMode, authAck, externalBaseUrl, analysis, providerKind, providerBaseUrl, providerModel, providerApiKey, targetType, onTargetsChanged]);
+
+  // For chat_completions the backend ignores the detected route and always
+  // registers POST /v1/chat/completions, so preview that instead of the raw
+  // HTTP route to avoid misrepresenting what gets scanned.
+  const contract: EndpointContract | null =
+    targetType === "chat_completions"
+      ? { method: "POST", path: "/v1/chat/completions", param_style: "json", param_key: "messages", response_shape: "json" }
+      : previewEndpoint(analysis);
+  const selectedPreset = providerPresets[providerKind];
 
   return (
     <section className="h-full overflow-y-auto p-4 scrollbar-thin sm:p-6">
@@ -182,7 +384,7 @@ export function ProjectImporter() {
             <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Agent Lab</p>
             <h2 className="text-xl font-extrabold">Projects</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              Import an AI agent codebase to analyse and deploy as a scan target.
+              Import an AI agent codebase, then deploy it as a working scan target — no manual Docker or target edits.
               {runMode ? <span className="ml-1 text-xs">Run mode: <span className="font-semibold">{runMode}</span>.</span> : null}
             </p>
           </div>
@@ -192,8 +394,13 @@ export function ProjectImporter() {
           </Button>
         </header>
 
+        <div className="flex items-start gap-2 rounded-lg border border-severity-medium/40 bg-severity-medium/10 px-3 py-2 text-xs text-foreground">
+          <ShieldAlert className="mt-0.5 size-4 shrink-0 text-severity-medium" />
+          <p><span className="font-bold">Authorized testing only.</span> Only import, deploy, and scan agents, models, or endpoints you own or are explicitly authorized to test.</p>
+        </div>
+
         {error ? (
-          <div className="rounded-lg border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">{error}</div>
+          <div className="rounded-lg border border-severity-high/40 bg-severity-high/10 px-3 py-2 text-sm text-severity-high">{error}</div>
         ) : null}
         {notice ? (
           <div className="rounded-lg border border-border bg-canvas px-3 py-2 text-sm text-muted-foreground">{notice}</div>
@@ -275,35 +482,193 @@ export function ProjectImporter() {
             </div>
           ) : (
             <div className="grid gap-3 sm:grid-cols-2">
-              {projects.map((project) => (
-                <div key={project.id} className="flex flex-col gap-2 rounded-xl border border-border bg-card p-4 shadow-card">
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="break-anywhere font-semibold">{project.id}</p>
-                      <p className="mt-0.5 text-xs text-muted-foreground">
-                        {project.source || "managed"}{project.framework ? ` · ${project.framework}` : ""}{project.has_dockerfile ? " · Dockerfile" : ""}
-                      </p>
+              {projects.map((project) => {
+                const active = project.id === selectedId;
+                return (
+                  <div
+                    key={project.id}
+                    className={`flex flex-col gap-2 rounded-xl border bg-card p-4 shadow-card transition-colors ${active ? "border-primary ring-1 ring-primary" : "border-border"}`}
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <button type="button" className="min-w-0 flex-1 text-left" onClick={() => { if (!active) void selectProject(project.id); }}>
+                        <p className="break-anywhere font-semibold">{project.id}</p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">
+                          {project.source || "managed"}{project.framework ? ` · ${project.framework}` : ""}{project.has_dockerfile ? " · Dockerfile" : ""}
+                        </p>
+                      </button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={busy === `del:${project.id}` || project.writable === false}
+                        onClick={() => void removeProject(project.id)}
+                        title={project.writable === false ? "Read-only project" : "Remove project"}
+                      >
+                        {busy === `del:${project.id}` ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+                      </Button>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                      <span className="inline-flex items-center gap-1"><FileCode2 className="size-3.5" />{project.file_count ?? "—"} files</span>
+                      <span className="inline-flex items-center gap-1"><HardDrive className="size-3.5" />{formatBytes(project.size_bytes)}</span>
                     </div>
                     <Button
-                      variant="ghost"
+                      variant={active ? "primary" : "outline"}
                       size="sm"
-                      disabled={busy === `del:${project.id}` || project.writable === false}
-                      onClick={() => void removeProject(project.id)}
-                      title={project.writable === false ? "Read-only project" : "Remove project"}
+                      className="mt-1 self-start"
+                      disabled={active}
+                      onClick={() => { if (!active) void selectProject(project.id); }}
                     >
-                      {busy === `del:${project.id}` ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+                      <Rocket className="size-4" />
+                      <span>{active ? "Selected" : "Analyse & deploy"}</span>
+                      {!active ? <ChevronDown className="size-3.5" /> : null}
                     </Button>
                   </div>
-                  <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
-                    <span className="inline-flex items-center gap-1"><FileCode2 className="size-3.5" />{project.file_count ?? "—"} files</span>
-                    <span className="inline-flex items-center gap-1"><HardDrive className="size-3.5" />{formatBytes(project.size_bytes)}</span>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
+
+        {/* Deploy panel for the selected project. */}
+        {selectedId ? (
+          <div className="rounded-xl border border-border bg-card p-4 shadow-card">
+            <div className="mb-3 flex items-center gap-2">
+              <Rocket className="size-4 text-primary" />
+              <h3 className="text-sm font-bold">Deploy “{selectedId}” as a scan target</h3>
+              {analyzing ? <Loader2 className="size-4 animate-spin text-muted-foreground" /> : null}
+            </div>
+
+            {/* Detected contract summary. */}
+            {analysis ? (
+              <div className="mb-4 grid gap-2 rounded-lg border border-border bg-canvas p-3 text-xs sm:grid-cols-2">
+                <div><span className="text-muted-foreground">Framework:</span> <span className="font-semibold">{analysis.framework || "unknown"}</span></div>
+                <div><span className="text-muted-foreground">Ports:</span> <span className="font-semibold">{(analysis.ports || []).join(", ") || "—"}</span></div>
+                <div className="sm:col-span-2">
+                  <span className="text-muted-foreground">{targetType === "chat_completions" ? "Target contract:" : "Detected inference endpoint:"}</span>{" "}
+                  {contract ? (
+                    <span className="font-mono font-semibold">{contract.method} {contract.path} · {contract.param_style === "query" ? `?${contract.param_key}=` : `{${contract.param_key}}`} → {contract.response_shape}</span>
+                  ) : (
+                    <span className="font-semibold">none detected (you can supply an external endpoint)</span>
+                  )}
+                </div>
+                <div className="sm:col-span-2 text-muted-foreground">
+                  The auto-created target uses this contract — correct method, endpoint, request body, and response extraction — with no manual edits.
+                </div>
+              </div>
+            ) : null}
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="text-xs font-semibold text-muted-foreground">
+                Deployment mode
+                <select className="input mt-1 text-sm" value={deployMode} onChange={(e) => setDeployMode(e.target.value as DeployMode)}>
+                  <option value="container">Containerized local agent</option>
+                  <option value="hybrid">Hybrid (local app + external model)</option>
+                  <option value="external">External endpoint (no build)</option>
+                </select>
+              </label>
+              <label className="text-xs font-semibold text-muted-foreground">
+                Target type
+                <select className="input mt-1 text-sm" value={targetType} onChange={(e) => setTargetType(e.target.value as TargetType)}>
+                  <option value="http_json">HTTP JSON / text</option>
+                  <option value="chat_completions">OpenAI Chat Completions</option>
+                </select>
+              </label>
+
+              {deployMode === "external" ? (
+                <label className="text-xs font-semibold text-muted-foreground sm:col-span-2">
+                  External base URL
+                  <input className="input mt-1 text-sm font-mono" placeholder="http://127.0.0.1:9000" value={externalBaseUrl} onChange={(e) => setExternalBaseUrl(e.target.value)} />
+                </label>
+              ) : null}
+
+              {deployMode === "hybrid" ? (
+                <>
+                  <label className="text-xs font-semibold text-muted-foreground">
+                    Model provider
+                    <select className="input mt-1 text-sm" value={providerKind} onChange={(e) => onProviderKind(e.target.value)}>
+                      <option value="">Select provider…</option>
+                      {Object.entries(providerPresets).map(([k, v]) => (
+                        <option key={k} value={k}>{v.display_name || k}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-xs font-semibold text-muted-foreground">
+                    Model provider base URL
+                    <input className="input mt-1 text-sm font-mono" placeholder="http://host.docker.internal:11434/v1" value={providerBaseUrl} onChange={(e) => setProviderBaseUrl(e.target.value)} />
+                  </label>
+                  <label className="text-xs font-semibold text-muted-foreground sm:col-span-2">
+                    Model
+                    <input className="input mt-1 text-sm" placeholder="llama3.1, qwen2.5, …" value={providerModel} onChange={(e) => setProviderModel(e.target.value)} />
+                  </label>
+                  {selectedPreset?.requires_api_key ? (
+                    <label className="text-xs font-semibold text-muted-foreground sm:col-span-2">
+                      API key <span className="font-normal">(not persisted; injected into the container runtime)</span>
+                      <input type="password" autoComplete="off" className="input mt-1 text-sm" placeholder="sk-…" value={providerApiKey} onChange={(e) => setProviderApiKey(e.target.value)} />
+                    </label>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+
+            {deployMode !== "container" ? (
+              <label className="mt-3 flex items-start gap-2 text-xs text-muted-foreground">
+                <input type="checkbox" className="mt-0.5" checked={authAck} onChange={(e) => setAuthAck(e.target.checked)} />
+                <span>I am authorized to test the supplied endpoint / external model, and any configured credentials are approved for security testing.</span>
+              </label>
+            ) : null}
+
+            <div className="mt-4 flex flex-wrap items-center gap-2">
+              <Button variant="primary" size="sm" onClick={() => void deploy()} disabled={busy === "deploy" || analyzing}>
+                {busy === "deploy" ? <Loader2 className="size-4 animate-spin" /> : <Rocket className="size-4" />}
+                <span>{busy === "deploy" ? "Deploying…" : "Build / Run / Auto-create target"}</span>
+              </Button>
+              {deployMode === "container" ? (
+                <span className="text-xs text-muted-foreground">Builds and runs the container on a free host port, health-checks it, and registers a target.</span>
+              ) : null}
+            </div>
+
+            {/* Deployment summary. */}
+            {deployment?.deployed ? (
+              <div className="mt-4 rounded-lg border border-severity-low/40 bg-severity-low/10 p-3">
+                <div className="mb-2 flex items-center gap-2 text-sm font-bold text-severity-low">
+                  <CheckCircle2 className="size-4" />
+                  <span>Deployment ready</span>
+                </div>
+                <dl className="grid gap-x-4 gap-y-1 text-xs sm:grid-cols-2">
+                  <Row label="Mode" value={deployment.deployment_mode} />
+                  <Row label="Reachable base URL" value={deployment.base_url} mono />
+                  <Row label="Selected endpoint" value={`${deployment.endpoint_contract?.method || ""} ${deployment.endpoint_contract?.path || ""}`.trim()} mono />
+                  <Row label="Target ID" value={(deployment.target_ids || []).join(", ")} mono />
+                  <Row label="Container port" value={deployment.container_port != null ? String(deployment.container_port) : "—"} />
+                  <Row label="Host port" value={deployment.host_port != null ? String(deployment.host_port) : "—"} />
+                  <div className="flex items-center gap-1.5">
+                    <dt className="text-muted-foreground">Health:</dt>
+                    <dd className="inline-flex items-center gap-1 font-semibold"><Activity className="size-3.5" />{deployment.health_status || "unknown"}</dd>
+                  </div>
+                </dl>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button variant="primary" size="sm" onClick={() => { const id = deployment.target_ids?.[0]; if (id) onRunScan?.(id); }} disabled={!deployment.target_ids?.length}>
+                    <ScanSearch className="size-4" />
+                    <span>Run baseline scan</span>
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => onNavigate?.("targets")}>
+                    <Server className="size-4" />
+                    <span>Open in Targets</span>
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
     </section>
+  );
+}
+
+function Row({ label, value, mono }: { label: string; value?: string; mono?: boolean }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <dt className="text-muted-foreground">{label}:</dt>
+      <dd className={`break-anywhere font-semibold ${mono ? "font-mono" : ""}`}>{value || "—"}</dd>
+    </div>
   );
 }

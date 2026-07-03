@@ -326,6 +326,10 @@ def analyze_agent_project(project_id: str) -> dict[str, Any]:
         "framework": framework,
         "ports": ports or [8000],
         "endpoints": endpoints,
+        # The authoritative inference-endpoint choice, so callers (e.g. the WebUI
+        # deploy preview) display the same route the deploy path will register
+        # instead of re-implementing the ranking and drifting from it.
+        "selected_endpoint": select_inference_endpoint(endpoints),
         "env_vars": env_vars,
         "has_dockerfile": (path / "Dockerfile").exists(),
         "has_requirements": (path / "requirements.txt").exists(),
@@ -1051,9 +1055,23 @@ def _register_targets(save_target_fn, project_id: str, base_url: str, target_typ
             "environment": "agent_lab",
             "safety_profile": safety_profile,
         }
-    target_id = f"agent-lab-{project_id}-{target_type}".lower().replace("_", "-")
+    target_id = _runtime_target_id(project_id, target_type)
     saved = save_target_fn(target_id, config)
     return [saved["target_id"]]
+
+
+def _runtime_target_id(project_id: str, target_type: str) -> str:
+    """Derive a runtime target id that satisfies the target store's id rules.
+
+    Project ids may contain dots and be up to 80 chars (both allowed by
+    ``PROJECT_ID_RE``), but the runtime target store requires
+    ``^[A-Za-z0-9][A-Za-z0-9_-]{1,80}$``. Map any disallowed character to a
+    hyphen and cap the length so a dotted or long project name (e.g.
+    ``socket.io``) does not dead-end the deploy with a validation error.
+    """
+    raw = f"agent-lab-{project_id}-{target_type}".lower()
+    safe = re.sub(r"[^a-z0-9]+", "-", raw).strip("-")
+    return safe[:81] or "agent-lab-target"
 
 
 def list_deployments() -> list[dict[str, Any]]:

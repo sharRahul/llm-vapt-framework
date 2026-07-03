@@ -8,6 +8,7 @@ external endpoint deployment mode.
 
 from __future__ import annotations
 
+import re
 import socket
 
 import pytest
@@ -96,6 +97,21 @@ def test_select_inference_endpoint_none_for_empty():
     assert agent_lab.select_inference_endpoint([]) is None
 
 
+def test_analyze_exposes_selected_endpoint(tmp_path, monkeypatch):
+    # analyze_agent_project must publish the authoritative selected endpoint so
+    # the WebUI preview matches what the deploy path registers.
+    proj = tmp_path / "projects" / "aira"
+    proj.mkdir(parents=True)
+    (proj / "app.py").write_text(AIRA_SOURCE, encoding="utf-8")
+    monkeypatch.setattr(agent_lab, "MANAGED_PROJECTS_ROOT", proj.parent)
+    monkeypatch.setattr(agent_lab, "MOUNTED_PROJECTS_ROOT", tmp_path / "none")
+    info = agent_lab.analyze_agent_project("aira")
+    assert info["selected_endpoint"] is not None
+    assert info["selected_endpoint"]["path"] == "/get"
+    assert info["selected_endpoint"]["method"] == "GET"
+    assert info["selected_endpoint"]["param_key"] == "msg"
+
+
 # --- contract-derived target config ----------------------------------------------
 
 
@@ -159,6 +175,31 @@ def test_register_targets_builds_post_json_config_with_detected_key():
     assert cfg["method"] == "POST"
     assert cfg["request_body_template"] == {"prompt": "{{prompt}}"}
     assert cfg["response_extraction_path"] == "response"
+
+
+def test_runtime_target_id_sanitises_dots_and_length():
+    # Dotted project ids (allowed by PROJECT_ID_RE) must not produce an invalid
+    # runtime target id that dead-ends the deploy.
+    tid = agent_lab._runtime_target_id("socket.io", "http_json")
+    assert tid == "agent-lab-socket-io-http-json"
+    assert re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{1,80}", tid)
+    long_tid = agent_lab._runtime_target_id("a" * 80, "chat_completions")
+    assert len(long_tid) <= 81
+    assert re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{1,80}", long_tid)
+
+
+def test_register_targets_uses_sanitised_id(monkeypatch):
+    save, saved = _capture_save_fn()
+    ids = agent_lab._register_targets(
+        save_target_fn=save,
+        project_id="my.dotted.agent",
+        base_url="http://127.0.0.1:9000",
+        target_type="http_json",
+        contract={"method": "POST", "path": "/chat", "param_key": "prompt", "response_shape": "json", "response_path": ""},
+        safety_profile="local_lab_safe",
+    )
+    assert "." not in ids[0]
+    assert ids[0] == "agent-lab-my-dotted-agent-http-json"
 
 
 def test_register_targets_chat_completions_unchanged():
