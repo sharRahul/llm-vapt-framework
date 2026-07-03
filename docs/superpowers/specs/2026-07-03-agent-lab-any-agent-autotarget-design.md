@@ -4,13 +4,38 @@
 **Status:** Design agreed, implementation deferred to next session.
 **Author:** Rahul Sharma (with Claude)
 
+## Intended use / authorization boundary
+
+Agent Lab is intended for **authorized AI red teaming, security testing, and
+pre-deployment vulnerability discovery**. It is designed to help security teams,
+developers, and model/application owners validate AI agents and LLM-backed
+applications before production release.
+
+The workflow assumes the user has permission to import, deploy, interact with, and
+scan the target agent or model endpoint. Agent Lab should not be used against
+unauthorized third-party systems, unauthorized cloud endpoints, model APIs, or applications without explicit
+authorization.
+
+Key intended use cases:
+
+- testing internal AI agents before deployment;
+- validating authorized third-party/open-source agents in a local lab environment;
+- reproducing vulnerabilities in deliberately vulnerable AI applications;
+- checking prompt-injection, data-leakage, unsafe-output, tool-use, and policy
+  bypass risks in controlled environments;
+- generating evidence for remediation and security sign-off.
+
+The product should make the authorized-testing assumption visible in the UI and
+documentation.
+
 ## Goal
 
-A user must be able to point VulnoraIQ at **any AI agent project** and have VulnoraIQ
-do everything needed to test it, with **zero manual/external steps**:
+A user must be able to point VulnoraIQ at **any AI agent project, local model-serving
+app, or compatible external LLM endpoint** and have VulnoraIQ do everything needed
+to test it, with **minimal to zero manual/external steps**:
 
 ```
-import agent source → build Docker image → run the container
+import agent or model source → build Docker image → run the container
   → auto-register a WORKING scannable target (correct method, endpoint, body, response)
   → scan
 ```
@@ -19,7 +44,7 @@ Today the user (and Claude, during manual testing of the AIRA vulnerable chatbot
 had to do the Docker build, `docker run`, host-port juggling, and hand-fix the
 target adapter config. All of that must be baked into Agent Lab.
 
-Acceptance: deploy the real third-party **AIRA Vulnerable-AI-Chatbot** through the
+Acceptance: deploy the real third-party **[AIRA Vulnerable-AI-Chatbot](https://github.com/aira-security/Vulnerable-AI-Chatbot)** through the
 Agent Lab flow end-to-end (import → deploy → auto-target → scan) with **no manual
 `docker` commands and no manual target edits**, and get a completed scan with real
 interaction evidence.
@@ -75,7 +100,20 @@ Analysis today is split across two analyzers:
 
 Keep all changes inside `webui/agent_lab.py` and `webui/project_analyzer.py`, with
 a possible small touch in `webui/hosted_server.py` only if the deploy handler needs
-to pass through new fields. No new subsystem.
+to pass through new fields. 
+
+Deployment modes:
+1. Containerized local agent
+   - build image
+   - run container
+   - register target
+2. External endpoint agent
+   - no Docker build
+   - user supplies base URL / auth config
+   - register OpenAI-compatible or custom HTTP target
+3. Hybrid agent
+   - run local app container
+   - app depends on external model provider or local model server
 
 ### 1. Unify + enrich endpoint detection
 
@@ -133,6 +171,37 @@ endpoint instead of hardcoding:
   `CHANGELOG.md` to state that deploying any agent now auto-produces a working
   target matching the agent's real HTTP contract (incl. GET/query and text
   responses) on a free host port.
+- Display an authorization notice before deployment/scanning:
+  "Only deploy and scan agents, models, or endpoints you own or are explicitly
+  authorized to test."
+- For External endpoint and Hybrid agent modes, require the user to acknowledge
+  that they are authorized to test the supplied endpoint and that any configured
+  credentials are approved for security testing.
+- Document authorized-use expectations, safe lab setup, credential handling, and
+  pre-production testing guidance.
+
+### 5. Deployment reliability, cleanup, and observability
+
+- Add a post-run health check before registering the target:
+  - wait for the selected port to respond;
+  - retry with timeout;
+  - surface build/run/health errors clearly in the UI.
+- Capture and expose deployment logs:
+  - Docker build logs;
+  - container startup logs;
+  - target registration errors;
+  - scanner interaction errors.
+- Implement cleanup on failed deployment:
+  - remove failed containers;
+  - avoid orphaned images/containers where safe;
+  - release deployment records only after successful registration.
+- Persist selected endpoint contract:
+  `{ method, path, param_style, param_key, response_shape, response_path }`.
+- Persist deployment metadata:
+  `{ deployment_mode, image_id, container_id, container_port, host_port,
+     base_url, target_ids, health_status, created_at, updated_at }`.
+- Never persist raw API keys or secrets in deployment records.
+  Use environment variables, secret references, or runtime-only injection.
 
 ## Implementation steps (next session)
 
@@ -153,6 +222,25 @@ endpoint instead of hardcoding:
    steps**.
 6. Run full gate: `ruff`, `mypy`, `pytest`, console `npm run build` if any TS
    changes; update docs; commit; push.
+7. Add External endpoint mode:
+   - accept base URL, adapter type, auth configuration, and endpoint contract;
+   - register target without Docker build/run;
+   - require authorization acknowledgement.
+8. Add Hybrid agent mode:
+   - build/run local app container;
+   - collect external model-server configuration;
+   - inject required environment variables;
+   - register the app endpoint as the scan target.
+9. Add deployment summary UI:
+   - show detected contract, reachable URL, selected endpoint, target ID,
+     health status, logs, and deployment mode;
+   - add one-click Run baseline scan.
+10. Add production hardening:
+    - health checks;
+    - deployment timeout handling;
+    - cleanup on failure;
+    - safe credential handling;
+    - structured error messages.
 
 ## Testing / acceptance
 
@@ -162,14 +250,67 @@ endpoint instead of hardcoding:
 - Integration/E2E: AIRA deployed and scanned entirely through Agent Lab, evidence
   contains AIRA's real responses (e.g. the sensitive-info refusal), zero manual
   steps. This is the definition of done for the user's request.
+- External endpoint mode:
+  - register OpenAI-compatible endpoint without Docker build;
+  - register custom HTTP endpoint with explicit method/path/body/response config;
+  - authorization acknowledgement is required.
+- Hybrid mode:
+  - local app receives model-server config through environment variables;
+  - target registration uses the local app endpoint, not the model-server endpoint;
+  - missing model-server config produces an actionable error.
+- UI:
+  - deployment summary displays reachable URL, selected endpoint, target ID,
+    health status, logs, and Run scan action.
+- Reliability:
+  - failed build is surfaced clearly;
+  - failed container startup cleans up correctly;
+  - failed health check does not register a broken target;
+  - raw secrets are not persisted in deployment records.
+
+## Included Extensions
+
+Agent Lab must support non-self-contained agents through the deployment modes
+defined above.
+
+- **AIGoat**
+  - **[AISecurityConsortium/AIGoat](https://github.com/AISecurityConsortium/AIGoat)**
+    appears suitable as a future local-container acceptance target if it can run
+    locally through Docker or a standard app server flow.
+  - **[orcasecurity-research/AIGoat](https://github.com/orcasecurity-research/AIGoat)**
+    is AWS/Terraform-backed infrastructure and should be treated as an
+    External endpoint or cloud/IaC-backed target rather than a normal local
+    Docker agent.
+- **[Raiker](https://github.com/sharRahul/Raiker)**
+  - Treat as a **Hybrid agent**:
+    local app/container + externally configured OpenAI-compatible model endpoint.
+  - Agent Lab should allow the user to configure the required model-server base URL,
+    auth settings, and any required environment variables before deployment.
+- **External endpoint agents**
+  - Allow users to register an existing base URL without building a container.
+  - Support OpenAI-compatible endpoints and custom HTTP JSON/text endpoints.
+  - Require authorization acknowledgement before saving or scanning the target.
+- **Hybrid agents**
+  - Run the local app container.
+  - Configure external dependencies such as Ollama, vLLM, LM Studio, Azure OpenAI,
+    OpenAI-compatible APIs, or other cloud-hosted model services.
+  - Store only safe credential references or environment-variable names, not raw
+    secrets in deployment records.
+  - For this implementation phase, keep **[AIRA](https://github.com/aira-security/Vulnerable-AI-Chatbot)** as the primary real-agent proof because it is self-contained enough to validate import → build → run → auto-target → scan with zero manual Docker or target edits.
+
+- Consider a richer Agent Lab UI that displays the detected contract, reachable URL,
+  selected endpoint, target ID, deployment mode, logs, health status, and a one-click
+  “Run scan” action.
+  - **Richer Agent Lab UI**
+  - Display the detected contract.
+  - Show reachable URL, selected endpoint, target ID, deployment mode, logs, and health status.
+  - Add one-click actions for:
+    - Open target
+    - Run baseline scan
+    - View logs
+    - Stop/remove deployment
 
 ## Out of scope
 
-- **AIGoat** (AWS Lambda/Terraform) and **Raiker** (needs a running local
-  OpenAI-compatible model server + built SPA) — neither runs keyless/offline, so
-  they cannot be the zero-external acceptance target. AIRA is the real-agent proof.
-  Support for cloud/model-server-backed agents can be a later increment.
-- No new UI framework work beyond surfacing the reachable URL / target id.
 - Not vendoring third-party agent source into the repo (user imports the agent).
 
 ## Notes from the manual-testing session that motivated this
