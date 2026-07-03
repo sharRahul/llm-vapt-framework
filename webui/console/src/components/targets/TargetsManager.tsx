@@ -21,6 +21,7 @@ import { cn } from "@/lib/utils";
 const ENVIRONMENTS = ["local", "lab", "internal", "production-like"];
 const SCAN_PROFILES = ["baseline", "rag", "agent", "full", "owasp-aitg-full"];
 const TARGET_TYPES = ["http_json", "chat_completions", "ollama_generate", "webhook_json", "rag_query", "agent_tool_loop"];
+const HTTP_METHODS = ["POST", "GET", "PUT"];
 
 const defaultTarget = (): TargetConfig => ({
   name: "New authorised AI target",
@@ -403,6 +404,12 @@ export function TargetsManager() {
                   <span className="mt-1 block text-[11px] text-muted-foreground">{dockerBacked ? "From the deployed agent container." : "Loopback/private host of the AI system under test."}</span>
                 </Field>
                 <Field label="Endpoint path"><input value={draft.endpoint_path || ""} onChange={(e) => setDraft({ ...draft, endpoint_path: e.target.value })} readOnly={!endpointEditable} tabIndex={endpointEditable ? 0 : -1} aria-readonly={!endpointEditable} className={cn("input font-mono", !endpointEditable && "cursor-not-allowed opacity-70")} placeholder="/v1/chat/completions" /></Field>
+                <Field label="HTTP method">
+                  <select value={(draft.method || "POST").toUpperCase()} onChange={(e) => setDraft({ ...draft, method: e.target.value })} disabled={!endpointEditable} className={cn("input", !endpointEditable && "cursor-not-allowed opacity-70")}>
+                    {HTTP_METHODS.map((m) => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                  <span className="mt-1 block text-[11px] text-muted-foreground">{(draft.method || "POST").toUpperCase() === "GET" ? "Request body fields are sent as query parameters." : "Request body template is sent as the JSON body."}</span>
+                </Field>
                 {needsModel ? <Field label="Model"><input value={draft.model || ""} onChange={(e) => setDraft({ ...draft, model: e.target.value })} className="input font-mono" placeholder="gpt-4o-mini / llama3" /></Field> : null}
                 <Field label="Auth token env var"><input value={draft.auth_token_env || draft.token_env_var || ""} onChange={(e) => setDraft({ ...draft, auth_token_env: e.target.value, token_env_var: undefined })} className="input font-mono" placeholder="LLM_VAPT_TARGET_TOKEN" /></Field>
               </div>
