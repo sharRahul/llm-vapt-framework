@@ -6,10 +6,11 @@ import json
 import os
 import re
 import shutil
+import socket
 import subprocess
 import time
 import zipfile
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -66,6 +67,34 @@ ENV_PATTERNS = [
     re.compile(r"process\.env\.([A-Z][A-Z0-9_]{1,120})"),
 ]
 
+# Ordered by preference: the first candidate found in a handler is treated as
+# the user-supplied inference parameter (AIRA uses ``msg``; most chat agents use
+# ``prompt``/``input``/``query``).
+PARAM_KEY_CANDIDATES = ["msg", "message", "prompt", "input", "query", "question", "text", "q"]
+USER_PARAM_KEYS = {"msg", "message", "prompt", "input", "query", "question", "text"}
+# Path tokens that indicate an inference/chat endpoint worth scanning.
+INFERENCE_PATH_TOKENS = {
+    "chat", "ask", "get", "query", "predict", "invoke", "completion", "completions",
+    "complete", "message", "messages", "msg", "run", "api", "generate", "respond",
+    "prompt", "inference", "infer", "v1", "answer", "conversation",
+}
+# Routes that are never the inference endpoint.
+NON_INFERENCE_PATHS = {
+    "/", "/health", "/healthz", "/healthcheck", "/ready", "/readyz", "/live",
+    "/liveness", "/readiness", "/refresh", "/favicon.ico", "/docs", "/redoc",
+    "/openapi.json", "/metrics", "/status", "/ping", "/version", "/robots.txt",
+}
+NON_INFERENCE_PREFIXES = ("/static", "/assets", "/_", "/.well-known", "/public")
+JSON_RESPONSE_SIGNALS = ("jsonify(", "JSONResponse", "JsonResponse", "return json.", "make_response(jsonify")
+TEXT_RESPONSE_SIGNALS = ("PlainTextResponse", "return str(", "content_type='text", 'content_type="text', "text/plain")
+RESPONSE_KEY_PATTERNS = [
+    re.compile(r"jsonify\(\s*\{\s*['\"](\w+)['\"]"),
+    re.compile(r"JSONResponse\(\s*(?:content=)?\{\s*['\"](\w+)['\"]"),
+    re.compile(r"return\s+\{\s*['\"](\w+)['\"]"),
+]
+DEPLOYMENT_MODES = {"container", "external", "hybrid"}
+HEALTH_CHECK_TIMEOUT = int(os.getenv("VULNORAIQ_AGENT_LAB_HEALTH_TIMEOUT", "30"))
+
 
 @dataclass
 class ImportResult:
@@ -90,6 +119,13 @@ class DeploymentResult:
     ports: list[int]
     endpoints: list[dict[str, Any]]
     created_at: float
+    deployment_mode: str = "container"
+    container_port: int | None = None
+    host_port: int | None = None
+    base_url: str = ""
+    health_status: str = "unknown"
+    endpoint_contract: dict[str, Any] = field(default_factory=dict)
+    updated_at: float = 0.0
 
 
 def _ensure_roots() -> None:
@@ -374,8 +410,112 @@ def _detect_endpoints(text: str) -> list[dict[str, Any]]:
             if key in seen:
                 continue
             seen.add(key)
-            endpoints.append({"method": method, "path": path, "param_style": "json", "param_key": "prompt"})
+            # Inspect the handler body that follows the route decorator to
+            # recover the real request/response contract instead of assuming
+            # a JSON ``prompt`` body (which breaks GET/query and text agents).
+            segment = text[match.end(): match.end() + 1600]
+            param_style, param_key = _detect_request_param(segment, text, method)
+            response_shape, response_path = _detect_response_contract(segment)
+            endpoints.append(
+                {
+                    "method": method,
+                    "path": path,
+                    "param_style": param_style,
+                    "param_key": param_key,
+                    "response_shape": response_shape,
+                    "response_path": response_path,
+                }
+            )
     return endpoints[:30]
+
+
+def _detect_request_param(segment: str, full_text: str, method: str) -> tuple[str, str]:
+    """Return ``(param_style, param_key)`` for a detected endpoint.
+
+    ``param_style`` is ``query`` when the handler reads request query params (or
+    the method is GET) and ``json`` otherwise. ``param_key`` is the first known
+    user-input key referenced by the handler (falling back to a whole-file scan
+    and finally a method-appropriate default).
+    """
+
+    def _find(scope: str) -> str | None:
+        for candidate in PARAM_KEY_CANDIDATES:
+            needles = (
+                f'"{candidate}"',
+                f"'{candidate}'",
+                f'.get("{candidate}"',
+                f".get('{candidate}'",
+            )
+            if any(needle in scope for needle in needles):
+                return candidate
+        return None
+
+    param_key = _find(segment) or _find(full_text) or ("msg" if method == "GET" else "prompt")
+    if method == "GET":
+        param_style = "query"
+    elif any(sig in segment for sig in ("request.args", "request.query_params", ".query_params", "req.query")):
+        param_style = "query"
+    else:
+        param_style = "json"
+    return param_style, param_key
+
+
+def _detect_response_contract(segment: str) -> tuple[str, str]:
+    """Infer ``(response_shape, response_path)`` from a handler body.
+
+    Defaults to ``text`` (safer: the adapter returns the whole body) when the
+    shape cannot be determined.
+    """
+    seg = segment or ""
+    if any(sig in seg for sig in JSON_RESPONSE_SIGNALS) or re.search(r"return\s+\{", seg):
+        return "json", _detect_response_key(seg)
+    if any(sig in seg for sig in TEXT_RESPONSE_SIGNALS):
+        return "text", ""
+    if re.search(r"return\s+f?['\"]", seg):
+        return "text", ""
+    return "text", ""
+
+
+def _detect_response_key(segment: str) -> str:
+    for pattern in RESPONSE_KEY_PATTERNS:
+        match = pattern.search(segment)
+        if match:
+            return match.group(1)
+    return ""
+
+
+def _rank_endpoint(endpoint: dict[str, Any]) -> int:
+    path = str(endpoint.get("path") or "").lower()
+    tokens = {tok for tok in re.split(r"[^a-z0-9]+", path) if tok}
+    score = 0
+    if tokens & INFERENCE_PATH_TOKENS:
+        score += 3
+    if str(endpoint.get("param_key") or "") in USER_PARAM_KEYS:
+        score += 2
+    if str(endpoint.get("method") or "").upper() in {"POST", "PUT"}:
+        score += 1
+    if str(endpoint.get("response_shape") or "") == "json":
+        score += 1
+    return score
+
+
+def select_inference_endpoint(endpoints: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Pick the endpoint most likely to be the agent's inference route.
+
+    Infrastructure routes (``/``, ``/health``, static, docs, …) are dropped
+    first; the remainder is ranked by path hints, user-param usage, method, and
+    response shape, preserving source order as the tie-breaker.
+    """
+    if not endpoints:
+        return None
+
+    def _is_infra(endpoint: dict[str, Any]) -> bool:
+        path = str(endpoint.get("path") or "").lower()
+        return path in NON_INFERENCE_PATHS or path.startswith(NON_INFERENCE_PREFIXES)
+
+    candidates = [ep for ep in endpoints if not _is_infra(ep)] or list(endpoints)
+    ranked = sorted(enumerate(candidates), key=lambda item: (-_rank_endpoint(item[1]), item[0]))
+    return dict(ranked[0][1])
 
 
 def _detect_env_vars(text: str) -> list[dict[str, Any]]:
@@ -519,10 +659,112 @@ def _python_default_command(framework: str | None) -> list[str]:
     return ["sh", "-c", "uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000}"]
 
 
+def _running_in_container() -> bool:
+    """True when VulnoraIQ itself runs inside a container (Docker Lab Mode).
+
+    In that mode the scanner shares the agent Docker network and must reach the
+    agent by its container DNS name. On the host (Desktop Mode) it must use the
+    published ``127.0.0.1:<host_port>`` instead.
+    """
+    run_mode = os.getenv("VULNORAIQ_RUN_MODE", "").strip().lower()
+    if run_mode in {"desktop", "native"}:
+        return False
+    if os.getenv("VULNORAIQ_IN_CONTAINER"):
+        return True
+    return Path("/.dockerenv").exists()
+
+
+def _port_is_free(port: int, host: str = "127.0.0.1") -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            sock.bind((host, port))
+        except OSError:
+            return False
+    return True
+
+
+def _free_host_port(preferred: int | None = None, host: str = "127.0.0.1") -> int:
+    """Return a bindable host port, preferring ``preferred`` when it is free.
+
+    Falls back to an OS-assigned ephemeral port so a busy host port (a real
+    failure hit during manual AIRA testing: host ``5000`` was occupied) never
+    blocks the deployment.
+    """
+    if preferred and 1 <= int(preferred) <= 65535 and _port_is_free(int(preferred), host):
+        return int(preferred)
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.bind((host, 0))
+        return int(sock.getsockname()[1])
+
+
+def _wait_for_port(base_url: str, timeout: int = HEALTH_CHECK_TIMEOUT) -> bool:
+    """Poll the target host:port until it accepts a TCP connection or times out."""
+    parsed = urlparse(base_url)
+    host = parsed.hostname
+    port = parsed.port
+    if not host or not port:
+        return False
+    deadline = time.monotonic() + max(1, timeout)
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection((host, port), timeout=2):
+                return True
+        except OSError:
+            time.sleep(0.5)
+    return False
+
+
+def _resolve_endpoint_contract(info: dict[str, Any], target_cfg: dict[str, Any], target_type: str) -> dict[str, Any]:
+    """Combine the detected inference endpoint with any explicit UI overrides.
+
+    Explicit ``payload.target`` fields always win so an operator can hand-fix a
+    contract the analyzer got wrong.
+    """
+    selected = select_inference_endpoint(info.get("endpoints") or []) or {}
+    contract = {
+        "method": str(selected.get("method") or ("POST" if target_type == "chat_completions" else "POST")).upper(),
+        "path": str(selected.get("path") or _default_endpoint_path(info, target_type)),
+        "param_style": str(selected.get("param_style") or "json"),
+        "param_key": str(selected.get("param_key") or "prompt"),
+        "response_shape": str(selected.get("response_shape") or "text"),
+        "response_path": str(selected.get("response_path") or ""),
+    }
+    if target_type == "chat_completions":
+        contract["path"] = str(target_cfg.get("endpoint_path") or "/v1/chat/completions")
+        contract["method"] = "POST"
+        return contract
+    if target_cfg.get("endpoint_path"):
+        contract["path"] = str(target_cfg["endpoint_path"])
+    if target_cfg.get("method"):
+        contract["method"] = str(target_cfg["method"]).upper()
+    if target_cfg.get("param_key"):
+        contract["param_key"] = str(target_cfg["param_key"])
+    if target_cfg.get("param_style"):
+        contract["param_style"] = str(target_cfg["param_style"])
+    if "response_extraction_path" in target_cfg:
+        response_path = str(target_cfg.get("response_extraction_path") or "")
+        contract["response_path"] = response_path
+        contract["response_shape"] = "json" if response_path else "text"
+    return contract
+
+
 def deploy_agent_project(project_id: str, payload: dict[str, Any], save_target_fn) -> DeploymentResult:
+    deployment_mode = str(payload.get("deployment_mode") or "container").strip().lower()
+    if deployment_mode not in DEPLOYMENT_MODES:
+        raise ValueError(f"deployment_mode must be one of {sorted(DEPLOYMENT_MODES)}")
+    if deployment_mode == "external":
+        return _deploy_external_endpoint(project_id, payload, save_target_fn)
+
     path, source, writable = _project_path(project_id)
     info = analyze_agent_project(project_id)
     provider = payload.get("provider") if isinstance(payload.get("provider"), dict) else {}
+    if deployment_mode == "hybrid":
+        if not payload.get("authorization_acknowledged"):
+            raise ValueError("hybrid deployments require authorization_acknowledged=true for the external model dependency")
+        if not (provider.get("base_url") or provider.get("kind")):
+            raise ValueError("hybrid mode requires external model provider configuration (base_url or kind)")
     runtime_env = _validate_env_map(payload.get("env") or {})
     runtime_env.update(_provider_env(provider))
     gpu = payload.get("gpu") if isinstance(payload.get("gpu"), dict) else {}
@@ -530,9 +772,8 @@ def deploy_agent_project(project_id: str, payload: dict[str, Any], save_target_f
     ports = _normalise_ports(payload.get("ports") or info.get("ports") or [8000])
     target_cfg = payload.get("target") if isinstance(payload.get("target"), dict) else {}
     target_type = str(target_cfg.get("type") or "http_json")
-    target_path = str(target_cfg.get("endpoint_path") or _default_endpoint_path(info, target_type))
-    target_method = str(target_cfg.get("method") or ("POST" if target_type != "chat_completions" else "POST")).upper()
     target_profile = str(target_cfg.get("safety_profile") or "local_lab_safe")
+    contract = _resolve_endpoint_contract(info, target_cfg, target_type)
     pid = normalise_project_id(project_id)
     image_tag = f"vulnoraiq-agent-lab-{pid}".lower().replace("_", "-")
     container_name = f"vulnoraiq-agent-lab-{pid}".lower().replace("_", "-")
@@ -564,11 +805,19 @@ def deploy_agent_project(project_id: str, payload: dict[str, Any], save_target_f
     for key, value in sorted(runtime_env.items()):
         if value:
             env_flags += ["-e", f"{key}={value}"]
-    port_flags: list[str] = []
+    container_port = ports[0]
     publish_ports = bool(payload.get("publish_ports", True))
+    in_container = _running_in_container()
+    port_flags: list[str] = []
+    host_port = container_port
     if publish_ports:
-        for port in ports:
-            port_flags += ["-p", f"127.0.0.1:{port}:{port}"]
+        # Pick a free host port for the primary container port (the host port
+        # need not equal the container port) so a busy host port cannot break
+        # the deployment. Additional ports are published on free ports too.
+        host_port = _free_host_port(container_port)
+        port_flags += ["-p", f"127.0.0.1:{host_port}:{container_port}"]
+        for extra in ports[1:]:
+            port_flags += ["-p", f"127.0.0.1:{_free_host_port(extra)}:{extra}"]
 
     run_cmd = [
         "run",
@@ -606,18 +855,42 @@ def deploy_agent_project(project_id: str, payload: dict[str, Any], save_target_f
     run_cmd += port_flags + env_flags + [image_tag]
     container_id, _ = _run_docker(run_cmd)
 
+    # Reach the container by container DNS in Docker Lab Mode, and by the
+    # published loopback host port in Desktop Mode.
+    if in_container:
+        base_url = f"http://{container_name}:{container_port}"
+    else:
+        base_url = f"http://127.0.0.1:{host_port}"
+
+    # Health-gate registration: never register a target for a container that
+    # never came up. Clean the failed container up rather than leaking it.
+    health_status = "healthy"
+    if publish_ports or in_container:
+        if not _wait_for_port(base_url, HEALTH_CHECK_TIMEOUT):
+            logs = _safe_container_logs(container_name)
+            try:
+                _run_docker(["rm", "-f", container_name])
+            except RuntimeError:
+                pass
+            detail = f" Last container logs:\n{logs}" if logs else ""
+            raise RuntimeError(
+                f"agent container '{container_name}' did not become reachable at {base_url} "
+                f"within {HEALTH_CHECK_TIMEOUT}s; deployment aborted and container removed.{detail}"
+            )
+    else:
+        health_status = "unpublished"
+
     target_ids = _register_targets(
         save_target_fn=save_target_fn,
         project_id=pid,
-        container_name=container_name,
-        port=ports[0],
+        base_url=base_url,
         target_type=target_type,
-        endpoint_path=target_path,
-        method=target_method,
+        contract=contract,
         safety_profile=target_profile,
     )
+    now = time.time()
     result = DeploymentResult(
-        deployment_id=f"{pid}-{int(time.time())}",
+        deployment_id=f"{pid}-{int(now)}",
         project_id=pid,
         container_name=container_name,
         image_tag=image_tag,
@@ -628,7 +901,82 @@ def deploy_agent_project(project_id: str, payload: dict[str, Any], save_target_f
         target_ids=target_ids,
         ports=ports,
         endpoints=info.get("endpoints", []),
-        created_at=time.time(),
+        created_at=now,
+        deployment_mode=deployment_mode,
+        container_port=container_port,
+        host_port=host_port if publish_ports else None,
+        base_url=base_url,
+        health_status=health_status,
+        endpoint_contract=contract,
+        updated_at=now,
+    )
+    _save_deployment(result)
+    return result
+
+
+def _safe_container_logs(container_name: str, tail: int = 40) -> str:
+    try:
+        out, err = _run_docker(["logs", "--tail", str(tail), container_name])
+    except RuntimeError:
+        return ""
+    return (out or err or "").strip()[:4000]
+
+
+def _deploy_external_endpoint(project_id: str, payload: dict[str, Any], save_target_fn) -> DeploymentResult:
+    """Register a scan target for an already-running external endpoint.
+
+    No Docker build/run happens: the operator supplies the reachable base URL,
+    the target contract, and an explicit authorization acknowledgement.
+    """
+    if not payload.get("authorization_acknowledged"):
+        raise ValueError("external endpoint deployments require authorization_acknowledged=true")
+    target_cfg = payload.get("target") if isinstance(payload.get("target"), dict) else {}
+    target_type = str(target_cfg.get("type") or "http_json")
+    target_profile = str(target_cfg.get("safety_profile") or "local_lab_safe")
+    base_url = str(payload.get("base_url") or target_cfg.get("base_url") or "").strip().rstrip("/")
+    if not base_url:
+        raise ValueError("external endpoint mode requires a base_url")
+    parsed = urlparse(base_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("base_url must be an http(s) URL with a host")
+    pid = normalise_project_id(project_id)
+    info: dict[str, Any] = {"endpoints": []}
+    try:
+        info = analyze_agent_project(project_id)
+    except FileNotFoundError:
+        # External endpoints need not have imported source; fall back to
+        # whatever contract the operator supplied.
+        pass
+    contract = _resolve_endpoint_contract(info, target_cfg, target_type)
+    target_ids = _register_targets(
+        save_target_fn=save_target_fn,
+        project_id=pid,
+        base_url=base_url,
+        target_type=target_type,
+        contract=contract,
+        safety_profile=target_profile,
+    )
+    now = time.time()
+    result = DeploymentResult(
+        deployment_id=f"{pid}-{int(now)}",
+        project_id=pid,
+        container_name="",
+        image_tag="",
+        container_id="",
+        status="external",
+        gpu={"mode": "none", "device_ids": ""},
+        provider={},
+        target_ids=target_ids,
+        ports=[],
+        endpoints=info.get("endpoints", []),
+        created_at=now,
+        deployment_mode="external",
+        container_port=None,
+        host_port=None,
+        base_url=base_url,
+        health_status="external",
+        endpoint_contract=contract,
+        updated_at=now,
     )
     _save_deployment(result)
     return result
@@ -656,10 +1004,18 @@ def _default_endpoint_path(info: dict[str, Any], target_type: str) -> str:
     return "/"
 
 
-def _register_targets(save_target_fn, project_id: str, container_name: str, port: int, target_type: str, endpoint_path: str, method: str, safety_profile: str) -> list[str]:
+def _register_targets(save_target_fn, project_id: str, base_url: str, target_type: str, contract: dict[str, Any], safety_profile: str) -> list[str]:
+    """Register a scan target whose config matches the agent's real HTTP contract.
+
+    For ``http_json`` the method, endpoint path, request body (keyed by the
+    detected user param) and response extraction path all come from the resolved
+    ``contract`` rather than being hardcoded, so GET/query and plain-text agents
+    (e.g. AIRA's ``GET /get?msg=``) register correctly with no manual edits.
+    """
+    base_url = base_url.rstrip("/")
+    endpoint_path = str(contract.get("path") or "/")
     if not endpoint_path.startswith("/"):
         endpoint_path = "/" + endpoint_path
-    base_url = f"http://{container_name}:{port}"
     if target_type == "chat_completions":
         config = {
             "name": f"Agent Lab {project_id} chat completions",
@@ -677,14 +1033,20 @@ def _register_targets(save_target_fn, project_id: str, container_name: str, port
             "safety_profile": safety_profile,
         }
     else:
+        param_key = str(contract.get("param_key") or "prompt")
+        response_shape = str(contract.get("response_shape") or "text")
+        response_path = str(contract.get("response_path") or "")
+        # Empty extraction path returns the whole body — correct for plain-text
+        # responses and a safe fallback for JSON with no detected key.
+        response_extraction_path = response_path if (response_shape == "json" and response_path) else ""
         config = {
-            "name": f"Agent Lab {project_id} HTTP JSON",
+            "name": f"Agent Lab {project_id} HTTP",
             "type": "http_json",
             "base_url": base_url,
             "endpoint_path": endpoint_path,
-            "method": method,
-            "request_body_template": {"prompt": "{{prompt}}"},
-            "response_extraction_path": "response",
+            "method": str(contract.get("method") or "POST").upper(),
+            "request_body_template": {param_key: "{{prompt}}"},
+            "response_extraction_path": response_extraction_path,
             "authorisation_required": True,
             "environment": "agent_lab",
             "safety_profile": safety_profile,

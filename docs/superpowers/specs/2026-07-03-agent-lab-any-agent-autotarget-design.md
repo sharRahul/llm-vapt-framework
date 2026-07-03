@@ -1,7 +1,13 @@
 # Agent Lab: deploy any AI agent → working scannable target (design / plan)
 
 **Date:** 2026-07-03
-**Status:** Design agreed, implementation deferred to next session.
+**Status:** Implemented — endpoint-contract detection + ranking, contract-derived
+auto-targets, free-port + run-mode-aware `base_url`, health-gated registration
+with cleanup, External/Hybrid deployment modes, authorization acknowledgement,
+and the deployment-summary UI landed in `webui/agent_lab.py`,
+`webui/assistant_server.py`, `webui/static/agent-lab/`, with unit tests in
+`tests/test_agent_lab_autotarget.py`. Remaining: the live AIRA Docker E2E
+(requires a Docker host) is documented as the manual acceptance test.
 **Author:** Rahul Sharma (with Claude)
 
 ## Intended use / authorization boundary

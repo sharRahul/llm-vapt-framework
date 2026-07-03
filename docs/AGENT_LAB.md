@@ -10,6 +10,51 @@ http://localhost:8787/agent-lab
 
 The React project workspace also embeds this page through the Project Importer area.
 
+## Authorized-use boundary
+
+Agent Lab is intended for **authorized AI red teaming, security testing, and pre-deployment vulnerability discovery**: testing internal AI agents before deployment, validating authorized third-party/open-source agents in a local lab, reproducing vulnerabilities in deliberately vulnerable applications, and generating evidence for remediation sign-off.
+
+Only import, deploy, and scan agents, models, or endpoints you own or are explicitly authorized to test. For External endpoint and Hybrid deployment modes the WebUI requires an explicit authorization acknowledgement before it will register the target, and only approved credentials should be configured. Credentials are passed to the runtime as environment variables and are never persisted in deployment records or target YAML.
+
+## Deploy any agent → working scannable target
+
+Deploying an agent now auto-produces a **working** scan target that matches the agent's real HTTP contract — with **no manual `docker` commands and no manual target edits**:
+
+```text
+import agent source → build image → run container (free host port)
+  → health-check → auto-register a target (correct method/endpoint/body/response)
+  → scan
+```
+
+The analyzer recovers the request/response contract from the agent's source and Agent Lab derives the target config from it:
+
+- **Method / endpoint** — the inference endpoint is selected by ranking detected routes (paths such as `chat`, `ask`, `get`, `query`, `predict`, `invoke`, and routes that read a user param score higher; infrastructure routes such as `/`, `/health`, `/refresh`, `/docs`, and static paths are skipped).
+- **Request body** — keyed by the detected user parameter (`msg` / `prompt` / `input` / `query` / …). For `GET` endpoints the `http_json` adapter sends the body as query parameters, so a chatbot exposed as `GET /get?msg=` registers correctly.
+- **Response extraction** — plain-text responses register with an empty extraction path (the adapter returns the whole body); JSON responses use the detected key (e.g. `response`, `output`) or fall back to the whole body.
+
+An operator can still override any of these from the target editor; explicit overrides always win.
+
+## Deployment modes
+
+| Mode | Behaviour |
+| --- | --- |
+| Containerized local agent | Build the image, run the container on a free host port, health-check it, and register a target for the local app endpoint. |
+| Hybrid agent | Run the local app container but point it at an external model provider (Ollama, vLLM, LM Studio, OpenAI-compatible, cloud). The app endpoint is the scan target; the external model configuration is injected as environment variables. Requires an authorization acknowledgement. |
+| External endpoint agent | No Docker build. The operator supplies a reachable base URL and the target contract; Agent Lab registers an OpenAI-compatible or custom HTTP target directly. Requires an authorization acknowledgement. |
+
+## Run-mode-aware reachability and free host ports
+
+Agent Lab publishes the container on `127.0.0.1:<free-host-port>:<container-port>` and picks a free host port automatically, so a busy host port (for example host `5000` already in use) never blocks a deployment.
+
+The registered target's `base_url` depends on where VulnoraIQ itself runs:
+
+| VulnoraIQ run mode | Registered `base_url` |
+| --- | --- |
+| Desktop Mode (on the host) | `http://127.0.0.1:<host-port>` |
+| Docker Lab Mode (in a container on the agent network) | `http://<container-name>:<container-port>` |
+
+The run mode is detected from `VULNORAIQ_RUN_MODE`, `VULNORAIQ_IN_CONTAINER`, or the presence of `/.dockerenv`.
+
 ## What it does
 
 | Step | Capability |
@@ -171,8 +216,20 @@ Supported generated target types:
 
 | Target type | Use case |
 | --- | --- |
-| `http_json` | Agent endpoint accepts JSON such as `{ "prompt": "..." }`. |
+| `http_json` | Agent endpoint accepts JSON (`{ "prompt": "..." }`), query params (`GET /get?msg=`), or returns plain text. Method, endpoint, body key, and response extraction are derived from the detected contract. |
 | `chat_completions` | Agent exposes an OpenAI-compatible `/v1/chat/completions` endpoint. |
+
+The deploy response returns the auto-registered `target_ids`, the reachable `base_url`, the `health_status`, and the selected `endpoint_contract`, so the operator can go straight to a scan.
+
+## Deployment reliability and observability
+
+- **Health gate** — after the container starts, Agent Lab waits (with retries, `VULNORAIQ_AGENT_LAB_HEALTH_TIMEOUT` seconds) for the reachable URL to accept connections before registering a target. A container that never becomes reachable does **not** register a broken target.
+- **Cleanup on failure** — a failed health check removes the container (and surfaces its recent logs in the error) rather than leaking it; a failed build removes any Agent-Lab-generated `Dockerfile`.
+- **Deployment metadata** — each deployment record persists `deployment_mode`, `image_tag`, `container_id`, `container_port`, `host_port`, `base_url`, `health_status`, `endpoint_contract`, `target_ids`, and `created_at`/`updated_at`. Raw API keys and secrets are never persisted.
+
+## Deployment summary
+
+After a deploy the WebUI shows a summary card with the detected contract, reachable URL, selected endpoint, target ID, container/host ports, deployment mode, and health status, plus one-click **Run baseline scan** and **Stop / remove deployment** actions.
 
 ## Testing flow
 
@@ -209,4 +266,6 @@ Do not expose the default WebUI beyond loopback unless production auth, reverse 
 | `VULNORAIQ_AGENT_LAB_ALLOWED_GIT_HOSTS` | Allowed Git import hosts. | `github.com,gitlab.com,bitbucket.org` | `github.com,gitlab.com,bitbucket.org` |
 | `VULNORAIQ_AGENT_LAB_MAX_IMPORT_BYTES` | Max import size. | `52428800` | `52428800` |
 | `VULNORAIQ_AGENT_LAB_MAX_IMPORT_FILES` | Max import file count. | `2000` | `2000` |
+| `VULNORAIQ_AGENT_LAB_HEALTH_TIMEOUT` | Seconds to wait for a started container to become reachable before aborting. | `30` | `30` |
 | `VULNORAIQ_AGENT_NETWORK` | Docker network for launched agents. | `vulnoraiq-desktop-agent-lab` | `vulnoraiq_vulnoraiq-lab` |
+| `VULNORAIQ_IN_CONTAINER` | Set inside the VulnoraIQ container to force Docker Lab Mode reachability (container-DNS `base_url`). | unset | set |
