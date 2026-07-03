@@ -9,6 +9,8 @@ import shutil
 import socket
 import subprocess
 import time
+import urllib.error
+import urllib.request
 import zipfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -720,20 +722,64 @@ def _free_host_port(preferred: int | None = None, host: str = "127.0.0.1") -> in
         return int(sock.getsockname()[1])
 
 
-def _wait_for_port(base_url: str, timeout: int = HEALTH_CHECK_TIMEOUT) -> bool:
-    """Poll the target host:port until it accepts a TCP connection or times out."""
+def _http_responds(base_url: str, timeout: float = 2.0) -> bool:
+    """True if the URL returns *any* HTTP response (including 4xx/5xx).
+
+    A bare TCP connect is not enough on Docker Desktop: its host-side port proxy
+    accepts connections on a published port even when nothing inside the
+    container is listening (e.g. a crash-looping app), so the connection appears
+    open while no application is serving. An actual HTTP round-trip only
+    completes when an app answers, so it distinguishes a live app from an empty
+    published port whose backend is dead.
+    """
     parsed = urlparse(base_url)
-    host = parsed.hostname
-    port = parsed.port
-    if not host or not port:
+    if not parsed.hostname or not parsed.port:
         return False
+    req = urllib.request.Request(base_url, method="GET")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout):  # noqa: S310 - loopback health probe
+            return True
+    except urllib.error.HTTPError:
+        # 4xx/5xx still proves an application answered.
+        return True
+    except (urllib.error.URLError, OSError, ValueError):
+        return False
+
+
+def _container_run_state(container_name: str) -> tuple[str, bool]:
+    """Return ``(status, restarting)`` for a container, ("", False) if unknown.
+
+    A crash-looping container (bad entrypoint, import error) reports
+    ``restarting=True`` or cycles through ``exited`` — either means the app is
+    not actually serving, even if a published host port looks connectable.
+    """
+    try:
+        out, _ = _run_docker(
+            ["inspect", "-f", "{{.State.Status}}|{{.State.Restarting}}", container_name]
+        )
+    except RuntimeError:
+        return "", False
+    raw = (out or "").strip().splitlines()[0] if out else ""
+    status, _, restarting = raw.partition("|")
+    return status.strip(), restarting.strip().lower() == "true"
+
+
+def _wait_for_healthy(base_url: str, container_name: str, timeout: int = HEALTH_CHECK_TIMEOUT) -> bool:
+    """Poll until the container serves HTTP while genuinely running.
+
+    Registration is gated on this so a container that never boots its app (or
+    crash-loops) is never turned into a broken scan target. Requires both a real
+    HTTP response and a ``running``/not-restarting container state.
+    """
     deadline = time.monotonic() + max(1, timeout)
     while time.monotonic() < deadline:
-        try:
-            with socket.create_connection((host, port), timeout=2):
-                return True
-        except OSError:
-            time.sleep(0.5)
+        status, restarting = _container_run_state(container_name)
+        if status == "exited":
+            # The app process died and there is no restart pending: fail fast.
+            return False
+        if status == "running" and not restarting and _http_responds(base_url):
+            return True
+        time.sleep(0.5)
     return False
 
 
@@ -887,7 +933,7 @@ def deploy_agent_project(project_id: str, payload: dict[str, Any], save_target_f
     # never came up. Clean the failed container up rather than leaking it.
     health_status = "healthy"
     if publish_ports or in_container:
-        if not _wait_for_port(base_url, HEALTH_CHECK_TIMEOUT):
+        if not _wait_for_healthy(base_url, container_name, HEALTH_CHECK_TIMEOUT):
             logs = _safe_container_logs(container_name)
             try:
                 _run_docker(["rm", "-f", container_name])
@@ -895,8 +941,9 @@ def deploy_agent_project(project_id: str, payload: dict[str, Any], save_target_f
                 pass
             detail = f" Last container logs:\n{logs}" if logs else ""
             raise RuntimeError(
-                f"agent container '{container_name}' did not become reachable at {base_url} "
-                f"within {HEALTH_CHECK_TIMEOUT}s; deployment aborted and container removed.{detail}"
+                f"agent container '{container_name}' did not serve HTTP at {base_url} "
+                f"within {HEALTH_CHECK_TIMEOUT}s (it may have failed to start or is crash-looping); "
+                f"deployment aborted and container removed.{detail}"
             )
     else:
         health_status = "unpublished"

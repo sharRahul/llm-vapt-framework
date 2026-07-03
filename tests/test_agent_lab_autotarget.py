@@ -292,16 +292,45 @@ def test_free_host_port_falls_back_when_preferred_taken():
         assert agent_lab._port_is_free(chosen)
 
 
-def test_wait_for_port_true_when_listening_and_false_when_closed():
+def test_http_responds_true_for_http_server_including_errors():
+    import http.server
+    import threading
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):  # noqa: N802
+            self.send_response(404)  # a 4xx still proves an app answered
+            self.end_headers()
+
+        def log_message(self, *_args):  # silence
+            return
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        assert agent_lab._http_responds(f"http://127.0.0.1:{port}", timeout=3) is True
+    finally:
+        server.shutdown()
+
+
+def test_http_responds_false_for_open_socket_that_never_speaks_http():
+    # Models Docker Desktop's port proxy: the TCP connect succeeds (the socket
+    # accepts) but no application ever sends an HTTP response, so a TCP-only
+    # health check would false-positive while _http_responds must return False.
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as srv:
-        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         srv.bind(("127.0.0.1", 0))
-        srv.listen(1)
+        srv.listen(1)  # never accept()/respond
         port = srv.getsockname()[1]
-        assert agent_lab._wait_for_port(f"http://127.0.0.1:{port}", timeout=2) is True
-    # Socket is closed now; pick a very short timeout on a likely-free port.
-    free = agent_lab._free_host_port()
-    assert agent_lab._wait_for_port(f"http://127.0.0.1:{free}", timeout=1) is False
+        assert agent_lab._http_responds(f"http://127.0.0.1:{port}", timeout=1) is False
+
+
+def test_container_run_state_unknown_for_missing_container(monkeypatch):
+    def fake_docker(args):
+        raise RuntimeError("No such object")
+
+    monkeypatch.setattr(agent_lab, "_run_docker", fake_docker)
+    assert agent_lab._container_run_state("does-not-exist") == ("", False)
 
 
 # --- external endpoint deployment mode -------------------------------------------
