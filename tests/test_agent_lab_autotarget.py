@@ -112,6 +112,26 @@ def test_analyze_exposes_selected_endpoint(tmp_path, monkeypatch):
     assert info["selected_endpoint"]["param_key"] == "msg"
 
 
+def test_detect_ports_reads_flask_run_and_dockerfile_expose(tmp_path):
+    # AIRA binds its Flask app with app.run(..., port=5000) and declares
+    # EXPOSE 5000 / 7000 in its Dockerfile. Neither the bare run= port kwarg nor
+    # the Dockerfile is caught by the older PORT_PATTERNS, so the analyzer used
+    # to fall back to the default 8000 and publish a dead container port.
+    proj = tmp_path / "aira"
+    proj.mkdir()
+    (proj / "app.py").write_text(
+        "from flask import Flask\napp = Flask(__name__)\n"
+        "app.run('0.0.0.0', port=5000)\n",
+        encoding="utf-8",
+    )
+    (proj / "Dockerfile").write_text("FROM python:3.11-slim\nEXPOSE 5000\nEXPOSE 7000\n", encoding="utf-8")
+    text = (proj / "app.py").read_text(encoding="utf-8")
+    ports = agent_lab._detect_ports(proj, text)
+    assert ports[0] == 5000
+    assert 7000 in ports
+    assert 8000 not in ports
+
+
 # --- contract-derived target config ----------------------------------------------
 
 

@@ -256,7 +256,12 @@ async function selectProject(id) {
     showJson('analysis', state.selected);
     q('deploy').disabled = false;
     q('port').value = (state.selected.ports || [8000])[0] || 8000;
-    const ep = (state.selected.endpoints || [])[0];
+    // Pre-fill from the analyzer's ranked inference endpoint (e.g. AIRA's
+    // GET /get), not endpoints[0] which is often a non-inference route like the
+    // index "/". These form values are sent as target overrides on deploy, so
+    // seeding them from the unranked first endpoint would override the correct
+    // auto-detected contract with the wrong path.
+    const ep = state.selected.selected_endpoint || (state.selected.endpoints || [])[0];
     q('endpoint-path').value = ep ? ep.path : '/';
     q('http-method').value = ep ? ep.method : 'POST';
   } catch (e) {

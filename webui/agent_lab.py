@@ -60,6 +60,10 @@ PORT_PATTERNS = [
     re.compile(r"PORT\s*=\s*(\d{2,5})"),
     re.compile(r"listen\((\d{2,5})"),
     re.compile(r"uvicorn\s+[^\n]*--port\s+(\d{2,5})"),
+    # Bare port kwarg on a server-start call, e.g. Flask ``app.run('0.0.0.0',
+    # port=5000)`` or ``uvicorn.run(app, port=8000)`` — the run= prefix keeps
+    # this from matching unrelated ``port=`` assignments.
+    re.compile(r"\.run\([^)]*?\bport\s*=\s*(\d{2,5})"),
 ]
 ENV_PATTERNS = [
     re.compile(r"os\.getenv\(['\"]([A-Z][A-Z0-9_]{1,120})['\"](?:,\s*['\"]([^'\"]*)['\"])?"),
@@ -392,6 +396,16 @@ def _detect_ports(path: Path, text: str) -> list[int]:
             continue
         for match in re.finditer(r"PORT\s*=\s*(\d{2,5})", env_file.read_text(encoding="utf-8", errors="ignore")):
             found.add(int(match.group(1)))
+    # The Dockerfile is not part of the representative source text, but its
+    # EXPOSE directives are the authoritative container ports (AIRA declares
+    # EXPOSE 5000 while its Flask app.run also binds 5000).
+    dockerfile = path / "Dockerfile"
+    if dockerfile.exists():
+        for match in re.finditer(r"(?im)^\s*EXPOSE\s+(.+)$", dockerfile.read_text(encoding="utf-8", errors="ignore")):
+            for tok in re.findall(r"(\d{2,5})", match.group(1)):
+                port = int(tok)
+                if 1 <= port <= 65535:
+                    found.add(port)
     return sorted(found)
 
 
@@ -679,8 +693,11 @@ def _running_in_container() -> bool:
 
 
 def _port_is_free(port: int, host: str = "127.0.0.1") -> bool:
+    # Do NOT set SO_REUSEADDR here: on Windows it lets this probe bind a port
+    # that already has a listening socket (both sockets sharing via the flag),
+    # which would falsely report an occupied port as free. A strict bind fails
+    # with an OSError when the port is genuinely in use on every platform.
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             sock.bind((host, port))
         except OSError:
