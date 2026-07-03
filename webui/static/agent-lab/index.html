@@ -24,6 +24,10 @@
 
       <section id="status" class="status hidden"></section>
 
+      <section class="notice" role="note">
+        <strong>Authorized testing only.</strong> Only deploy and scan agents, models, or endpoints you own or are explicitly authorized to test. Configure only credentials that are approved for security testing.
+      </section>
+
       <section class="grid two">
         <article class="card">
           <h2>1. Import Agent</h2>
@@ -83,6 +87,14 @@
         <article class="card">
           <h2>4. Select CPU/GPU and Target</h2>
           <div class="grid two compact">
+            <label>Deployment mode<select id="deployment-mode">
+              <option value="container">Containerized local agent</option>
+              <option value="hybrid">Hybrid (local app + external model)</option>
+              <option value="external">External endpoint (no build)</option>
+            </select></label>
+            <label id="external-base-url-field" class="hidden">External base URL<input id="external-base-url" placeholder="http://127.0.0.1:9000" /></label>
+          </div>
+          <div class="grid two compact">
             <label>Runtime<select id="gpu-mode"><option value="cpu">CPU only</option><option value="all">All NVIDIA GPUs</option><option value="device">Specific GPU device IDs</option></select></label>
             <label>GPU device IDs<input id="gpu-devices" placeholder="0 or 0,1" /></label>
           </div>
@@ -99,9 +111,19 @@
             <label>Endpoint path<input id="endpoint-path" value="/" /></label>
           </div>
           <label>HTTP method<select id="http-method"><option>POST</option><option>GET</option><option>PUT</option><option>PATCH</option></select></label>
+          <label id="authorization-ack-field" class="checkbox hidden"><input id="authorization-ack" type="checkbox" /> I am authorized to test the supplied endpoint / external model, and any configured credentials are approved for security testing.</label>
           <button id="deploy" class="button success" type="button" disabled>Build / Run / Auto-create Target</button>
         </article>
       </section>
+
+      <article id="deployment-summary" class="card hidden">
+        <h2>Deployment Summary</h2>
+        <div id="summary-grid" class="summary-grid"></div>
+        <div class="summary-actions">
+          <button id="summary-run-scan" class="button danger" type="button">Run baseline scan</button>
+          <button id="summary-remove" class="button secondary" type="button">Stop / remove deployment</button>
+        </div>
+      </article>
 
       <section class="grid two">
         <article class="card">

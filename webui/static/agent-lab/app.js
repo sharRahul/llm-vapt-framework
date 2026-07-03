@@ -1,4 +1,4 @@
-const state = { csrf: null, projects: [], profiles: {}, targets: {}, selected: null, lastTargets: [] };
+const state = { csrf: null, projects: [], profiles: {}, targets: {}, selected: null, lastTargets: [], lastDeployment: null };
 const q = (id) => document.getElementById(id);
 
 async function request(path, options = {}) {
@@ -310,10 +310,23 @@ async function importFolder(ev) {
   }
 }
 
+function deploymentModeChanged() {
+  const mode = q('deployment-mode').value;
+  q('external-base-url-field').classList.toggle('hidden', mode !== 'external');
+  q('authorization-ack-field').classList.toggle('hidden', mode === 'container');
+}
+
 async function deploy() {
   if (!state.selected) return;
   try {
+    const mode = q('deployment-mode').value;
+    if (mode !== 'container' && !q('authorization-ack').checked) {
+      throw new Error('Confirm you are authorized to test this endpoint before deploying an external/hybrid target.');
+    }
     const body = {
+      deployment_mode: mode,
+      authorization_acknowledged: q('authorization-ack').checked,
+      base_url: q('external-base-url').value,
       provider: { kind: q('provider').value, base_url: q('provider-base-url').value, model: q('provider-model').value, api_key: q('provider-api-key').value },
       env: {},
       gpu: { mode: q('gpu-mode').value, device_ids: q('gpu-devices').value },
@@ -323,12 +336,69 @@ async function deploy() {
       publish_ports: q('publish-ports').value === 'true',
       target: { type: q('target-type').value, endpoint_path: q('endpoint-path').value, method: q('http-method').value, safety_profile: 'local_lab_safe' },
     };
+    note('Deploying ' + state.selected.id + '… (build/run/health-check can take a minute)');
     const data = await request('/api/agent-lab/projects/' + encodeURIComponent(state.selected.id) + '/deploy', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': await token() }, body: JSON.stringify(body) });
     state.lastTargets = data.target_ids || [];
+    state.lastDeployment = data;
+    renderDeploymentSummary(data);
     showJson('deployments', data);
-    note('Deployed ' + data.project_id);
+    note('Deployed ' + data.project_id + ' — auto-created target ' + (data.target_ids || []).join(', '));
     await load();
     renderTargets();
+  } catch (e) {
+    note(e.message, false);
+  }
+}
+
+function renderDeploymentSummary(data) {
+  const card = q('deployment-summary');
+  if (!data || !data.deployed) {
+    card.classList.add('hidden');
+    return;
+  }
+  const contract = data.endpoint_contract || {};
+  const health = data.health_status || 'unknown';
+  const rows = [
+    ['Deployment mode', data.deployment_mode || 'container'],
+    ['Reachable base URL', data.base_url || '(not published)'],
+    ['Selected endpoint', (contract.method || '') + ' ' + (contract.path || '')],
+    ['Request param', contract.param_key ? `${contract.param_key} (${contract.param_style || 'json'})` : '—'],
+    ['Response shape', contract.response_shape || '—'],
+    ['Target ID', (data.target_ids || []).join(', ') || '—'],
+    ['Container port', data.container_port != null ? String(data.container_port) : '—'],
+    ['Host port', data.host_port != null ? String(data.host_port) : '—'],
+  ];
+  q('summary-grid').innerHTML =
+    rows.map(([k, v]) => `<dt>${k}</dt><dd>${escapeHtml(String(v))}</dd>`).join('') +
+    `<dt>Health</dt><dd><span class="health-${escapeHtml(health)}">${escapeHtml(health)}</span></dd>`;
+  card.classList.remove('hidden');
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+async function summaryRunScan() {
+  const ids = state.lastTargets;
+  if (!ids.length) {
+    note('No auto-created target to scan yet.', false);
+    return;
+  }
+  q('target-select').value = ids[0];
+  await scan();
+}
+
+async function summaryRemove() {
+  const dep = state.lastDeployment;
+  if (!dep) return;
+  const ident = dep.deployment_id || dep.project_id;
+  if (!window.confirm(`Stop and remove deployment '${ident}'?`)) return;
+  try {
+    const data = await request('/api/agent-lab/deployments/' + encodeURIComponent(ident) + '/remove', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': await token() }, body: '{}' });
+    note(data.removed ? 'Removed deployment ' + ident : 'No running container found for ' + ident);
+    state.lastDeployment = null;
+    q('deployment-summary').classList.add('hidden');
+    await load();
   } catch (e) {
     note(e.message, false);
   }
@@ -359,8 +429,12 @@ document.addEventListener('DOMContentLoaded', () => {
   q('refresh-mounted').onclick = load;
   q('project-filter').oninput = renderProjects;
   q('provider').onchange = providerChanged;
+  q('deployment-mode').onchange = deploymentModeChanged;
   q('deploy').onclick = deploy;
   q('start-scan').onclick = scan;
+  q('summary-run-scan').onclick = summaryRunScan;
+  q('summary-remove').onclick = summaryRemove;
+  deploymentModeChanged();
   document.querySelectorAll('.tab').forEach((tab) => {
     tab.onclick = () => {
       document.querySelectorAll('.tab,.tab-panel').forEach((x) => x.classList.remove('active'));

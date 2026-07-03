@@ -183,19 +183,15 @@ class AssistantHostedWebUiHandler(base.HostedWebUiHandler):
         return False
 
     def _agent_lab_save_target_fn(self, payload: dict):
+        # Agent Lab now computes the reachable base_url itself (container DNS in
+        # Docker Lab Mode, published 127.0.0.1:<free host port> in Desktop Mode),
+        # so the save function must not rewrite it. In Desktop Mode we only tag
+        # the environment so the target is recognisable in the workspace.
         if not _is_desktop_mode():
             return base._save_runtime_target
-        ports = payload.get("ports") or [8000]
-        if not isinstance(ports, list):
-            ports = [ports]
-        try:
-            port = int(ports[0])
-        except (TypeError, ValueError, IndexError):
-            port = 8000
 
         def save_desktop_target(target_id: str, config: dict):
             desktop_config = dict(config)
-            desktop_config["base_url"] = f"http://127.0.0.1:{port}"
             desktop_config["environment"] = "agent_lab_desktop"
             return base._save_runtime_target(target_id, desktop_config)
 
