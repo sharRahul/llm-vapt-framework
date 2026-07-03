@@ -25,10 +25,6 @@ function note(msg, ok = true) {
   el.className = 'status ' + (ok ? 'ok' : 'bad');
 }
 
-function showJson(id, obj) {
-  q(id).textContent = JSON.stringify(obj, null, 2);
-}
-
 function toBase64(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -183,7 +179,6 @@ async function load() {
     renderProfiles();
     renderProjects();
     renderTargets();
-    showJson('deployments', data.deployments || []);
     note('Agent Lab ready. Import or select a real project.');
   } catch (e) {
     note(e.message, false);
@@ -238,7 +233,8 @@ async function deleteProject(id) {
       note('Deleted project ' + id);
       if (state.selected && state.selected.project_id === id) {
         state.selected = null;
-        showJson('analysis', 'Select a project to analyze it.');
+        q('analysis').innerHTML = '<p class="empty-state">Select a project to read its framework, ports, and the HTTP contract VulnoraIQ will scan.</p>';
+        q('contract-preview').classList.add('hidden');
         q('deploy').disabled = true;
       }
       await load();
@@ -253,7 +249,7 @@ async function deleteProject(id) {
 async function selectProject(id) {
   try {
     state.selected = await request('/api/agent-lab/projects/' + encodeURIComponent(id) + '/analyze');
-    showJson('analysis', state.selected);
+    renderAnalysis(state.selected);
     q('deploy').disabled = false;
     q('port').value = (state.selected.ports || [8000])[0] || 8000;
     // Pre-fill from the analyzer's ranked inference endpoint (e.g. AIRA's
@@ -264,6 +260,7 @@ async function selectProject(id) {
     const ep = state.selected.selected_endpoint || (state.selected.endpoints || [])[0];
     q('endpoint-path').value = ep ? ep.path : '/';
     q('http-method').value = ep ? ep.method : 'POST';
+    renderContractPreview();
   } catch (e) {
     note(e.message, false);
   }
@@ -346,12 +343,13 @@ async function deploy() {
     state.lastTargets = data.target_ids || [];
     state.lastDeployment = data;
     renderDeploymentSummary(data);
-    showJson('deployments', data);
+    renderDeploySuccess(data);
     note('Deployed ' + data.project_id + ' — auto-created target ' + (data.target_ids || []).join(', '));
     await load();
     renderTargets();
   } catch (e) {
     note(e.message, false);
+    renderDeployFailure(e.message);
   }
 }
 
@@ -381,6 +379,133 @@ function renderDeploymentSummary(data) {
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+// --- readable renderers (replace raw-JSON dumps) --------------------------------
+
+function methodBadge(method) {
+  const m = String(method || '').toUpperCase() || 'POST';
+  return `<span class="method method-${escapeHtml(m.toLowerCase())}">${escapeHtml(m)}</span>`;
+}
+
+// Compact human-readable contract: "GET /get ?msg= → text".
+function contractChip(c) {
+  if (!c || !c.path) return '';
+  const param = c.param_key
+    ? (c.param_style === 'query' ? `?${escapeHtml(c.param_key)}=` : `{ ${escapeHtml(c.param_key)} }`)
+    : '';
+  const shape = c.response_shape ? ` <span class="arrow">→</span> <span class="shape">${escapeHtml(c.response_shape)}</span>` : '';
+  return `${methodBadge(c.method)}<code class="path">${escapeHtml(c.path)}</code>${param ? `<code class="param">${param}</code>` : ''}${shape}`;
+}
+
+function renderAnalysis(info) {
+  const el = q('analysis');
+  const sel = info.selected_endpoint;
+  const facts = [
+    ['Framework', info.framework || 'unknown'],
+    ['Detected ports', (info.ports || []).join(', ') || '—'],
+    ['Dockerfile', info.has_dockerfile ? 'in project' : 'auto-generated on deploy'],
+    ['Source', `${info.source || '—'}${info.writable === false ? ' · read-only' : ''}`],
+    ['Files', info.file_count != null ? String(info.file_count) : '—'],
+  ];
+  const factRows = facts.map(([k, v]) => `<dt>${escapeHtml(k)}</dt><dd>${escapeHtml(String(v))}</dd>`).join('');
+  const envs = info.env_vars || [];
+  const envBlock = envs.length
+    ? `<div class="analysis-sub"><span class="analysis-sub-label">Environment variables</span><div class="pills">${envs.map((e) => `<span class="pill">${escapeHtml(e.name)}${e.required ? ' *' : ''}</span>`).join('')}</div></div>`
+    : '';
+  const contractBlock = sel
+    ? `<div class="contract-chip">${contractChip(sel)}</div>
+       <p class="analysis-hint">VulnoraIQ will register a target with this exact method, path, request key, and response handling — no manual edits.</p>`
+    : `<div class="analysis-warn">No inference endpoint was auto-detected. Set the HTTP method and endpoint path yourself below, or use <strong>External endpoint</strong> mode to point at a URL you already run.</div>`;
+  el.innerHTML = `
+    <div class="analysis-head">
+      <span class="analysis-name">${escapeHtml(info.name || info.id || 'project')}</span>
+      <span class="analysis-detected">Detected inference endpoint</span>
+    </div>
+    ${contractBlock}
+    <dl class="fact-grid">${factRows}</dl>
+    ${envBlock}`;
+}
+
+// Live preview of the target that the current form settings will produce.
+function renderContractPreview() {
+  const wrap = q('contract-preview');
+  const body = q('contract-preview-body');
+  if (!state.selected) { wrap.classList.add('hidden'); return; }
+  const type = q('target-type').value;
+  let c;
+  if (type === 'chat_completions') {
+    c = { method: 'POST', path: '/v1/chat/completions', param_key: 'messages', param_style: 'json', response_shape: 'json' };
+  } else {
+    const sel = state.selected.selected_endpoint || {};
+    c = {
+      method: q('http-method').value,
+      path: q('endpoint-path').value || '/',
+      param_key: sel.param_key,
+      param_style: sel.param_style,
+      response_shape: sel.response_shape,
+    };
+  }
+  body.innerHTML = contractChip(c) || '<span class="muted">Set a method and endpoint path.</span>';
+  wrap.classList.remove('hidden');
+}
+
+// Collapse runs of identical log lines ("ERROR ... (×9)") so failure output is
+// scannable instead of a wall of repeats.
+function dedupeLogs(text) {
+  const lines = String(text || '').split(/\r?\n/);
+  const out = [];
+  for (const line of lines) {
+    const last = out[out.length - 1];
+    if (last && last.text === line) { last.count += 1; }
+    else { out.push({ text: line, count: 1 }); }
+  }
+  return out.map((l) => (l.count > 1 ? `${l.text}  (×${l.count})` : l.text)).join('\n').trim();
+}
+
+function renderDeploySuccess(data) {
+  const el = q('deployments');
+  const c = data.endpoint_contract || {};
+  el.innerHTML = `
+    <div class="result result-ok">
+      <div class="result-head"><span class="result-dot"></span>Deployed ${escapeHtml(data.project_id || '')}</div>
+      <div class="result-contract contract-chip">${contractChip(c)}</div>
+      <dl class="fact-grid">
+        <dt>Reachable URL</dt><dd>${escapeHtml(data.base_url || '—')}</dd>
+        <dt>Target</dt><dd>${escapeHtml((data.target_ids || []).join(', ') || '—')}</dd>
+        <dt>Health</dt><dd><span class="health-${escapeHtml(data.health_status || 'unknown')}">${escapeHtml(data.health_status || 'unknown')}</span></dd>
+      </dl>
+      <p class="analysis-hint">Pick this target under “5. Test with VulnoraIQ” and start a scan.</p>
+    </div>`;
+}
+
+function renderDeployFailure(message) {
+  const el = q('deployments');
+  const marker = 'Last container logs:';
+  const idx = String(message).indexOf(marker);
+  const summary = idx >= 0 ? String(message).slice(0, idx).trim() : String(message).trim();
+  const logs = idx >= 0 ? dedupeLogs(String(message).slice(idx + marker.length)) : '';
+  el.innerHTML = `
+    <div class="result result-fail">
+      <div class="result-head"><span class="result-dot"></span>Deployment failed</div>
+      <p class="result-msg">${escapeHtml(summary)}</p>
+      ${logs ? `<details open><summary>Container logs</summary><pre class="log-block">${escapeHtml(logs)}</pre></details>` : ''}
+    </div>`;
+}
+
+function renderScanAccepted(data) {
+  const el = q('deployments');
+  el.innerHTML = `
+    <div class="result result-ok">
+      <div class="result-head"><span class="result-dot"></span>Scan queued</div>
+      <dl class="fact-grid">
+        <dt>Scan ID</dt><dd>${escapeHtml(data.id || '—')}</dd>
+        <dt>Target</dt><dd>${escapeHtml(data.target || '—')}</dd>
+        <dt>Profile</dt><dd>${escapeHtml(data.profile || '—')}</dd>
+        <dt>Status</dt><dd>${escapeHtml(data.status || 'queued')}</dd>
+      </dl>
+      <p class="analysis-hint">Follow progress and evidence in the main console Overview.</p>
+    </div>`;
 }
 
 async function summaryRunScan() {
@@ -419,8 +544,8 @@ async function scan() {
   try {
     const body = { target: q('target-select').value, profile: q('scan-profile').value || 'baseline', authorised: true };
     const data = await request('/api/scans', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': await token() }, body: JSON.stringify(body) });
-    showJson('deployments', data);
-    note('Scan accepted');
+    renderScanAccepted(data);
+    note('Scan queued for ' + (data.target || 'target'));
   } catch (e) {
     note(e.message, false);
   }
@@ -435,6 +560,10 @@ document.addEventListener('DOMContentLoaded', () => {
   q('project-filter').oninput = renderProjects;
   q('provider').onchange = providerChanged;
   q('deployment-mode').onchange = deploymentModeChanged;
+  // Keep the "target VulnoraIQ will create" preview in sync with manual edits.
+  q('http-method').onchange = renderContractPreview;
+  q('endpoint-path').oninput = renderContractPreview;
+  q('target-type').onchange = renderContractPreview;
   q('deploy').onclick = deploy;
   q('start-scan').onclick = scan;
   q('summary-run-scan').onclick = summaryRunScan;

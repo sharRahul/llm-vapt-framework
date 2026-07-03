@@ -15,6 +15,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Agent Lab `/agent-lab` page no longer shows raw JSON. Project analysis now renders a readable **contract chip** — the actual request VulnoraIQ will send, e.g. `GET /get ?msg= → text` with a colour-coded HTTP method — over a fact grid (framework, ports, Dockerfile, source), and a live "Target VulnoraIQ will create" preview mirrors the deploy form before you build. When no inference endpoint is auto-detected the panel gives direction ("set the method/path yourself, or use External endpoint mode") instead of a silent `null`. Deploy and scan results render as success/failure cards; failed deployments collapse repeated container-log lines (`ERROR … (×9)`) into a scannable block. Added visible keyboard focus outlines and reduced-motion support.
 - Active documentation index now points to current guides, implementation status, scorecard, assurance, and future-plan docs instead of completed or stale planning documents.
 - README, docs index, implementation status, run-mode docs, and manual LLM testing prompt now describe the consolidated normal CI posture through `.github/workflows/ci.yml`.
 - WebUI is mitigation-only: removed the "Apply Fix" action and its `status:"fixed"` persistence; relabeled the panel to "Recommended Mitigation" / "Mitigation View" with an explicit "guidance only — a human owner must implement and verify" note. VulnoraIQ advises; it does not change the target.

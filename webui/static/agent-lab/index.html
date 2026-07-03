@@ -112,6 +112,10 @@
           </div>
           <label>HTTP method<select id="http-method"><option>POST</option><option>GET</option><option>PUT</option><option>PATCH</option></select></label>
           <label id="authorization-ack-field" class="checkbox hidden"><input id="authorization-ack" type="checkbox" /> I am authorized to test the supplied endpoint / external model, and any configured credentials are approved for security testing.</label>
+          <div id="contract-preview" class="contract-preview hidden">
+            <span class="contract-preview-label">Target VulnoraIQ will create</span>
+            <div id="contract-preview-body" class="contract-chip"></div>
+          </div>
           <button id="deploy" class="button success" type="button" disabled>Build / Run / Auto-create Target</button>
         </article>
       </section>
@@ -128,14 +132,14 @@
       <section class="grid two">
         <article class="card">
           <h2>Project Analysis</h2>
-          <pre id="analysis" class="output">Select a project to analyze it.</pre>
+          <div id="analysis" class="analysis-panel"><p class="empty-state">Select a project to read its framework, ports, and the HTTP contract VulnoraIQ will scan.</p></div>
         </article>
         <article class="card">
           <h2>5. Test with VulnoraIQ</h2>
           <label>Auto-created target<select id="target-select"></select></label>
           <label>Scan profile<select id="scan-profile"></select></label>
           <button id="start-scan" class="button danger" type="button" disabled>Start Authorised Scan</button>
-          <pre id="deployments" class="output">No deployment selected yet.</pre>
+          <div id="deployments" class="result-panel"><p class="empty-state">Deploy an agent or start a scan — results show here.</p></div>
         </article>
       </section>
     </main>
