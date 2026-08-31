@@ -11,7 +11,7 @@ interface AppShellProps {
   scanFindingCount?: number;
   scanDisabled?: boolean;
   onToggleScan: () => void;
-  targets?: { id: string; label: string }[];
+  targets?: { id: string; label: string; ready?: boolean }[];
   selectedTarget?: string;
   onSelectTarget?: (id: string) => void;
   children: React.ReactNode;

@@ -26,7 +26,7 @@ interface HeaderBarProps {
   scanFindingCount?: number;
   scanDisabled?: boolean;
   onToggleScan: () => void;
-  targets?: { id: string; label: string }[];
+  targets?: { id: string; label: string; ready?: boolean }[];
   selectedTarget?: string;
   onSelectTarget?: (id: string) => void;
 }
@@ -123,7 +123,7 @@ export function HeaderBar({
               aria-label="Target to scan"
             >
               {targets.map((t) => (
-                <option key={t.id} value={t.id}>{t.label}</option>
+                <option key={t.id} value={t.id} disabled={t.ready === false}>{t.label}{t.ready === false ? " · unavailable" : ""}</option>
               ))}
             </select>
           </label>
@@ -177,6 +177,7 @@ function ViewTab({
     <button
       onClick={onClick}
       aria-pressed={active}
+      aria-label={label}
       className={cn(
         "inline-flex shrink-0 items-center justify-center gap-1.5 rounded px-2.5 py-1.5 text-xs font-semibold leading-none transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         active

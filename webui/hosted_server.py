@@ -110,6 +110,29 @@ def load_config() -> dict[str, Any]:
     }
 
 
+def target_readiness(targets: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Report whether a target can be offered as the default scan choice.
+
+    This is deliberately a configuration-only check: it never sends traffic to
+    a target, but it prevents shipped placeholders and incomplete endpoints
+    becoming the first action offered to an operator.
+    """
+    readiness: dict[str, dict[str, Any]] = {}
+    for target_id, raw in targets.items():
+        config = raw if isinstance(raw, dict) else {}
+        target_type = str(config.get("type") or "").lower()
+        endpoint = str(config.get("base_url") or config.get("endpoint") or "").strip()
+        if "example.invalid" in endpoint:
+            readiness[str(target_id)] = {"ready": False, "reason": "placeholder endpoint"}
+        elif target_type == "test_fixture":
+            readiness[str(target_id)] = {"ready": True}
+        elif not endpoint:
+            readiness[str(target_id)] = {"ready": False, "reason": "base URL is required"}
+        else:
+            readiness[str(target_id)] = {"ready": True}
+    return readiness
+
+
 def _reject_demo_target(target_name: str) -> None:
     allow = os.getenv("VULNORAIQ_ALLOW_TEST_FIXTURE_TARGETS", "false").strip().lower() in ("1", "true", "yes")
     if allow:
@@ -432,7 +455,8 @@ class HostedWebUiHandler(BaseHTTPRequestHandler):
             return
         if clean_path == "/api/targets":
             cfg = load_config()
-            self._send_json({"targets": cfg.get("targets", {})})
+            targets = cfg.get("targets", {})
+            self._send_json({"targets": targets, "readiness": target_readiness(targets)})
             return
         if clean_path == "/api/agents":
             agents = list_agents()

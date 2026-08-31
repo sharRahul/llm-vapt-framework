@@ -46,14 +46,11 @@ git add -A webui/static/console/
 Fonts are bundled rather than fetched from a CDN, so the console works offline
 and stays within its Content-Security-Policy.
 
-`webui/static/agent-lab/` is a small hand-written page served at `/agent-lab`.
-It is not part of the Vite build and needs no build step.
+Agent Lab is part of the React console’s **Projects** view and is included in the Vite build. The former `/agent-lab` page redirects to `/#/projects`.
 
 ## Packaging
 
-`pyproject.toml` lists `webui/static/console/*`, `webui/static/console/assets/*`,
-and `webui/static/agent-lab/*` as package data, so the built console ships in the
-Python distribution and the release package.
+`pyproject.toml` lists `webui/static/console/*` and `webui/static/console/assets/*` as package data, so the built console ships in the Python distribution and the release package.
 
 ## CI
 

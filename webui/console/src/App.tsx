@@ -152,7 +152,7 @@ function ConsoleInner() {
   const [scanPhase, setScanPhase] = useState("Idle");
   const [liveFindingCount, setLiveFindingCount] = useState(0);
   const [configuredTargetIds, setConfiguredTargetIds] = useState<string[]>([]);
-  const [configuredTargets, setConfiguredTargets] = useState<{ id: string; label: string }[]>([]);
+  const [configuredTargets, setConfiguredTargets] = useState<{ id: string; label: string; ready: boolean }[]>([]);
   const [scanTargetId, setScanTargetId] = useState<string>("");
 
   const displayFindings = runtimeFindings;
@@ -184,11 +184,13 @@ function ConsoleInner() {
 
   async function loadTargets() {
     try {
-      const data = await apiGet<{ targets: Record<string, TargetConfig> }>("/api/targets");
+      const data = await apiGet<{ targets: Record<string, TargetConfig>; readiness?: Record<string, { ready?: boolean }> }>("/api/targets");
       const ids = Object.keys(data.targets || {});
-      setConfiguredTargetIds(ids);
-      setConfiguredTargets(ids.map((id) => ({ id, label: data.targets[id]?.name || id })));
-      if (!scanTargetId && ids.length > 0) setScanTargetId(ids[0]);
+      const targets = ids.map((id) => ({ id, label: data.targets[id]?.name || id, ready: data.readiness?.[id]?.ready !== false }));
+      const readyIds = targets.filter((target) => target.ready).map((target) => target.id);
+      setConfiguredTargetIds(readyIds);
+      setConfiguredTargets(targets);
+      if (!scanTargetId || !readyIds.includes(scanTargetId)) setScanTargetId(readyIds[0] || "");
     } catch {
       // Targets unavailable; scan button will be disabled.
     }

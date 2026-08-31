@@ -61,7 +61,7 @@ the scan event stream, and `/metrics`.
 | Method | Path | Permission | Description |
 | --- | --- | --- | --- |
 | `GET` | `/api/config` | `view_scans` | Targets and profiles. Non-admins receive profile descriptions only. |
-| `GET` | `/api/targets` | `view_scans` | Configured plus runtime targets. |
+| `GET` | `/api/targets` | `view_scans` | Configured plus runtime targets, with a configuration-only `readiness` map so clients do not default to placeholders or incomplete endpoints. |
 | `POST` | `/api/targets/save` | `manage_runtime` | Validate and register a runtime target. Body: `{"id": "...", "target": {...}}`. |
 | `POST` | `/api/targets/delete` | `manage_runtime` | Remove a runtime target. Body: `{"id": "..."}`. |
 | `POST` | `/api/targets/{id}/validate` | `view_scans` | Connectivity check against a configured target. |

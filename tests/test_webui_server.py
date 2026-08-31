@@ -20,6 +20,19 @@ def test_validate_scan_request_accepts_explicit_test_fixture_target() -> None:
 def test_validate_scan_request_rejects_unknown_target() -> None:
     with pytest.raises(ValueError):
         validate_scan_request({"target": "missing", "profile": "baseline"})
+
+
+def test_target_readiness_marks_placeholder_as_unavailable() -> None:
+    from webui.hosted_server import target_readiness
+
+    readiness = target_readiness({
+        "demo": {"name": "Demo", "type": "test_fixture"},
+        "placeholder": {"name": "Placeholder", "type": "http_json", "base_url": "https://example.invalid"},
+    })
+
+    assert readiness["demo"]["ready"] is True
+    assert readiness["placeholder"]["ready"] is False
+    assert "placeholder" in readiness["placeholder"]["reason"].lower()
 def test_run_scan_job_generates_webui_outputs(tmp_path, monkeypatch) -> None:
     from webui.hosted_server import run_scan_job
 

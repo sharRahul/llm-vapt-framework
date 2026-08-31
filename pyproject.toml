@@ -108,7 +108,6 @@ include = ["core*", "integrations*", "modules*", "rag_testing*", "agent_testing*
 webui = [
     "static/console/*",
     "static/console/assets/*",
-    "static/agent-lab/*",
 ]
 
 [tool.pytest.ini_options]
@@ -117,6 +116,9 @@ testpaths = ["tests"]
 # Pinning it inside the working tree left locked/ACL-corrupted dirs on Windows
 # that made later runs fail with PermissionError as if the product were broken.
 addopts = "-q"
+markers = [
+    "docker: requires a running Docker Engine",
+]
 
 [tool.ruff]
 target-version = "py310"

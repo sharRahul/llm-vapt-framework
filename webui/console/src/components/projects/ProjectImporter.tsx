@@ -5,6 +5,7 @@ import {
   Loader2,
   RefreshCw,
   Trash2,
+  FileArchive,
   FileCode2,
   HardDrive,
   Rocket,
@@ -71,6 +72,7 @@ interface ProviderPreset {
 
 interface DeploymentResult {
   deployed?: boolean;
+  deployment_id?: string;
   project_id?: string;
   deployment_mode?: string;
   status?: string;
@@ -144,6 +146,7 @@ export function ProjectImporter({ onTargetsChanged, onRunScan, onNavigate }: Pro
   const [gitUrl, setGitUrl] = useState("");
   const [gitBranch, setGitBranch] = useState("");
   const folderInputRef = useRef<HTMLInputElement>(null);
+  const archiveInputRef = useRef<HTMLInputElement>(null);
 
   // Per-project deploy panel state.
   const [selectedId, setSelectedId] = useState<string>("");
@@ -156,6 +159,8 @@ export function ProjectImporter({ onTargetsChanged, onRunScan, onNavigate }: Pro
   const [providerBaseUrl, setProviderBaseUrl] = useState("");
   const [providerModel, setProviderModel] = useState("");
   const [providerApiKey, setProviderApiKey] = useState("");
+  const [customEnvText, setCustomEnvText] = useState("");
+  const [containerPort, setContainerPort] = useState("8000");
   const [authAck, setAuthAck] = useState(false);
   const [deployment, setDeployment] = useState<DeploymentResult | null>(null);
 
@@ -194,11 +199,14 @@ export function ProjectImporter({ onTargetsChanged, onRunScan, onNavigate }: Pro
     setProviderBaseUrl("");
     setProviderModel("");
     setProviderApiKey("");
+    setCustomEnvText("");
+    setContainerPort("8000");
     setAuthAck(false);
     setAnalyzing(true);
     try {
       const data = await apiGet<ProjectAnalysis>(`/api/agent-lab/projects/${encodeURIComponent(id)}/analyze`);
       setAnalysis(data);
+      setContainerPort(String(data.ports?.[0] || 8000));
       // Container mode needs a Dockerfile or a generatable framework; if neither,
       // nudge toward External mode so the flow never dead-ends.
       if (!data.has_dockerfile && !data.framework) setDeployMode("external");
@@ -244,6 +252,35 @@ export function ProjectImporter({ onTargetsChanged, onRunScan, onNavigate }: Pro
     }
   }, [refresh, selectProject]);
 
+  const importArchive = useCallback(async (file: File) => {
+    if (file.size > 50 * 1024 * 1024) {
+      setError("Archive exceeds the 50 MB import limit.");
+      return;
+    }
+    setError("");
+    setNotice("");
+    setBusy("archive");
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      let binary = "";
+      for (let start = 0; start < bytes.length; start += 8192) {
+        binary += String.fromCharCode(...bytes.subarray(start, start + 8192));
+      }
+      const projectId = sanitiseId(file.name.replace(/\.zip$/i, "")) || `agent-${Date.now()}`;
+      const result = await apiPost<{ project_id: string }>("/api/agent-lab/import/archive", {
+        archive_base64: btoa(binary), project_id: projectId,
+      });
+      setNotice(`Imported “${result.project_id}” from ZIP archive.`);
+      await refresh();
+      await selectProject(result.project_id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Archive import failed.");
+    } finally {
+      setBusy("");
+      if (archiveInputRef.current) archiveInputRef.current.value = "";
+    }
+  }, [refresh, selectProject]);
+
   const importGit = useCallback(async () => {
     if (!gitUrl.trim()) return;
     setError("");
@@ -280,6 +317,20 @@ export function ProjectImporter({ onTargetsChanged, onRunScan, onNavigate }: Pro
     }
   }, [refresh, selectedId]);
 
+  const parseCustomEnv = useCallback((): Record<string, string> => {
+    const entries = customEnvText.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    return entries.reduce<Record<string, string>>((env, entry) => {
+      const separator = entry.indexOf("=");
+      const name = entry.slice(0, separator).trim();
+      const value = entry.slice(separator + 1);
+      if (separator < 1 || !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) {
+        throw new Error("Custom environment variables must use NAME=value, one per line.");
+      }
+      env[name] = value;
+      return env;
+    }, {});
+  }, [customEnvText]);
+
   const onProviderKind = useCallback((kind: string) => {
     setProviderKind(kind);
     const preset = providerPresets[kind];
@@ -305,18 +356,23 @@ export function ProjectImporter({ onTargetsChanged, onRunScan, onNavigate }: Pro
       setError("Hybrid mode needs an external model provider — select one or set its base URL.");
       return;
     }
+    const selectedPort = Number(containerPort);
+    if (deployMode !== "external" && (!Number.isInteger(selectedPort) || selectedPort < 1 || selectedPort > 65535)) {
+      setError("Container port must be a whole number from 1 to 65535.");
+      return;
+    }
     setBusy("deploy");
     setDeployment(null);
     try {
-      const firstPort = analysis?.ports?.[0] || 8000;
+      const env = parseCustomEnv();
       const body = {
         deployment_mode: deployMode,
         authorization_acknowledged: authAck,
         base_url: externalBaseUrl.trim(),
         provider: deployMode === "hybrid" ? { kind: providerKind, base_url: providerBaseUrl, model: providerModel, api_key: providerApiKey } : {},
-        env: {},
+        env,
         gpu: { mode: "cpu", device_ids: "" },
-        ports: [firstPort],
+        ports: [selectedPort],
         publish_ports: true,
         // Let the backend derive method/endpoint/body/response from the detected
         // contract — this is the auto-target behaviour we want to showcase.
@@ -335,7 +391,24 @@ export function ProjectImporter({ onTargetsChanged, onRunScan, onNavigate }: Pro
     } finally {
       setBusy("");
     }
-  }, [selectedId, deployMode, authAck, externalBaseUrl, analysis, providerKind, providerBaseUrl, providerModel, providerApiKey, targetType, onTargetsChanged]);
+  }, [selectedId, deployMode, authAck, externalBaseUrl, containerPort, parseCustomEnv, providerKind, providerBaseUrl, providerModel, providerApiKey, targetType, onTargetsChanged]);
+
+  const removeDeployment = useCallback(async () => {
+    const deploymentId = deployment?.deployment_id;
+    if (!deploymentId) return;
+    setError("");
+    setBusy("remove-deployment");
+    try {
+      await apiPost(`/api/agent-lab/deployments/${encodeURIComponent(deploymentId)}/remove`, {});
+      setDeployment(null);
+      setNotice("Deployment and its runtime target were removed.");
+      onTargetsChanged?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not remove deployment.");
+    } finally {
+      setBusy("");
+    }
+  }, [deployment, onTargetsChanged]);
 
   // For chat_completions the backend ignores the detected route and always
   // registers POST /v1/chat/completions, so preview that instead of the raw
@@ -407,6 +480,19 @@ export function ProjectImporter({ onTargetsChanged, onRunScan, onNavigate }: Pro
             </Button>
           </div>
 
+          <div className="rounded-xl border border-border bg-card p-4 shadow-card">
+            <div className="mb-2 flex items-center gap-2">
+              <FileArchive className="size-4 text-primary" />
+              <h3 className="text-sm font-bold">Import ZIP archive</h3>
+            </div>
+            <p className="mb-3 text-xs text-muted-foreground">Upload a prepared agent archive. VulnoraIQ checks its size and safe paths before extracting it.</p>
+            <input ref={archiveInputRef} type="file" accept=".zip,application/zip" className="hidden" onChange={(e) => e.target.files?.[0] && void importArchive(e.target.files[0])} />
+            <Button variant="outline" size="sm" disabled={busy === "archive"} onClick={() => archiveInputRef.current?.click()}>
+              {busy === "archive" ? <Loader2 className="size-4 animate-spin" /> : <FileArchive className="size-4" />}
+              <span>{busy === "archive" ? "Importing…" : "Choose ZIP"}</span>
+            </Button>
+          </div>
+
           {/* Import from a Git repository. */}
           <div className="rounded-xl border border-border bg-card p-4 shadow-card">
             <div className="mb-2 flex items-center gap-2">
@@ -439,6 +525,11 @@ export function ProjectImporter({ onTargetsChanged, onRunScan, onNavigate }: Pro
             <h3 className="text-sm font-bold">Imported projects</h3>
             <span className="text-xs text-muted-foreground">{projects.length} total</span>
           </div>
+          <p className="mb-2 text-xs text-muted-foreground">Mapped projects are read-only. Refresh after changing the configured projects folder.</p>
+          <Button size="sm" variant="ghost" onClick={() => void refresh()} disabled={loading}>
+            <RefreshCw className={loading ? "size-4 animate-spin" : "size-4"} />
+            <span>Refresh mapped folders</span>
+          </Button>
 
           {loading ? (
             <p className="text-sm text-muted-foreground">Loading projects…</p>
@@ -577,6 +668,18 @@ export function ProjectImporter({ onTargetsChanged, onRunScan, onNavigate }: Pro
                   ) : null}
                 </>
               ) : null}
+
+              {deployMode !== "external" ? (
+                <label className="text-xs font-semibold text-muted-foreground">
+                  Container port
+                  <input inputMode="numeric" className="input mt-1 text-sm font-mono" value={containerPort} onChange={(e) => setContainerPort(e.target.value)} aria-describedby="container-port-help" />
+                  <span id="container-port-help" className="mt-1 block font-normal">Detected port is prefilled; the host port remains automatic.</span>
+                </label>
+              ) : null}
+              <label className="text-xs font-semibold text-muted-foreground sm:col-span-2">
+                Custom environment variables <span className="font-normal">(optional, one NAME=value per line; never saved in deployment records)</span>
+                <textarea className="input mt-1 min-h-20 w-full resize-y font-mono text-xs" placeholder="LOG_LEVEL=info" value={customEnvText} onChange={(e) => setCustomEnvText(e.target.value)} />
+              </label>
             </div>
 
             {deployMode !== "container" ? (
@@ -624,6 +727,12 @@ export function ProjectImporter({ onTargetsChanged, onRunScan, onNavigate }: Pro
                     <Server className="size-4" />
                     <span>Open in Targets</span>
                   </Button>
+                  {deployment.deployment_mode !== "external" ? (
+                    <Button variant="danger" size="sm" onClick={() => void removeDeployment()} disabled={busy === "remove-deployment"}>
+                      {busy === "remove-deployment" ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+                      <span>Remove deployment</span>
+                    </Button>
+                  ) : null}
                 </div>
               </div>
             ) : null}

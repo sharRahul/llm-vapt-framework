@@ -33,3 +33,26 @@ test('hosted server serves the console and creates an authorised fixture scan jo
   expect(job.profile).toBe('baseline');
   expect(['queued', 'running', 'completed']).toContain(job.status);
 });
+
+test('console navigation is compact at every viewport and legacy Agent Lab opens Projects', async ({ page }) => {
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 820, height: 1180 },
+    { width: 390, height: 844 },
+  ]) {
+    await page.setViewportSize(viewport);
+    await page.goto('/', { waitUntil: 'networkidle' });
+    for (const view of ['Overview', 'Workspace', 'Targets', 'Agents', 'Projects']) {
+      await page.getByRole('button', { name: view }).click();
+      await expect(page).toHaveURL(new RegExp(`#/${view.toLowerCase()}`));
+      const widths = await page.locator('body').evaluate((body) => ({ scroll: body.scrollWidth, client: body.clientWidth }));
+      expect(widths.scroll).toBeLessThanOrEqual(widths.client);
+    }
+  }
+
+  await page.goto('/agent-lab', { waitUntil: 'networkidle' });
+  await expect(page).toHaveURL(/#\/projects$/);
+  await expect(page.getByRole('heading', { name: 'Projects', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Import ZIP archive' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Refresh mapped folders' })).toBeVisible();
+});

@@ -66,7 +66,7 @@ Docker lab targets are defined in `config/targets.docker.yaml`. You must configu
 Open:
 
 ```text
-http://localhost:8787/agent-lab
+http://localhost:8787/#/projects
 ```
 
 Agent Lab supports importing a real project, configuring model-provider environment, choosing CPU or GPU runtime options, building/running the agent, creating a runtime target, and launching an authorised scan.
@@ -96,7 +96,7 @@ docker compose exec vulnoraiq-web vulnoraiq jobs show --job-id <job-id>
 
 1. Start Docker Compose through a Docker Lab launcher or manual Docker commands.
 2. Open <http://localhost:8787>.
-3. Use the target workspace to search/filter targets, or open `/agent-lab` to import and run a real agent.
+3. Use the target workspace to search/filter targets, or open **Projects** to import and run a real agent.
 4. Validate target connectivity.
 5. Confirm the authorisation checklist.
 6. Select a profile such as `ai_agent_foundation`, `baseline`, `rag`, `agent`, `full`, or a single focused profile.

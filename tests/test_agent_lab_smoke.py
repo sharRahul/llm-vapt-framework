@@ -1,8 +1,10 @@
+from http.client import HTTPConnection
 from pathlib import Path
+from threading import Thread
 
 import yaml
 
-from webui import agent_analysis, agent_lab
+from webui import agent_analysis, agent_lab, server
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -29,23 +31,56 @@ def test_project_id_rejects_path_like_names():
         raise AssertionError(name)
 
 
+def test_agent_lab_e2e_fixtures_describe_a_healthy_and_broken_agent():
+    echo = ROOT / "tests" / "fixtures" / "agents" / "echo-agent"
+    broken = ROOT / "tests" / "fixtures" / "agents" / "broken-agent"
+
+    assert (echo / "app.py").is_file()
+    assert (echo / "requirements.txt").read_text(encoding="utf-8").strip() == "flask"
+    assert "EXPOSE 5000" in (echo / "Dockerfile").read_text(encoding="utf-8")
+    assert (broken / "Dockerfile").is_file()
+
+
 def test_provider_env_maps_local_model():
     env = agent_lab._provider_env({"kind": "custom_env", "base_url": "http://localhost:9000/v1", "model": "local-model"})
     assert env["OPENAI_BASE_URL"] == "http://localhost:9000/v1"
     assert env["MODEL"] == "local-model"
 
 
-def test_agent_lab_static_ui_supports_local_folder_upload():
-    html = (ROOT / "webui" / "static" / "agent-lab" / "index.html").read_text(encoding="utf-8")
-    js = (ROOT / "webui" / "static" / "agent-lab" / "app.js").read_text(encoding="utf-8")
+def test_agent_lab_console_is_the_only_ui_and_covers_every_import_deploy_control():
+    source = (ROOT / "webui" / "console" / "src" / "components" / "projects" / "ProjectImporter.tsx").read_text(
+        encoding="utf-8"
+    )
 
-    assert "data-tab=\"folder\"" in html
-    assert "id=\"folder-form\"" in html
-    assert "webkitdirectory" in html
-    assert "./agent-lab/projects/" in html
-    assert "makeStoredZip" in js
-    assert "importFolder" in js
-    assert "/api/agent-lab/import/archive" in js
+    assert "Import ZIP archive" in source
+    assert "Refresh mapped folders" in source
+    assert "Custom environment variables" in source
+    assert "Container port" in source
+    assert "Run baseline scan" in source
+    assert "Imported projects" in source
+    assert not (ROOT / "webui" / "static" / "agent-lab").exists()
+
+
+def test_console_icon_only_navigation_has_accessible_labels():
+    header = (ROOT / "webui" / "console" / "src" / "components" / "HeaderBar.tsx").read_text(encoding="utf-8")
+
+    assert "aria-label={label}" in header
+
+
+def test_legacy_agent_lab_path_redirects_to_projects_console():
+    web = server.create_server("127.0.0.1", 0)
+    thread = Thread(target=web.serve_forever, daemon=True)
+    thread.start()
+    try:
+        connection = HTTPConnection("127.0.0.1", web.server_port, timeout=3)
+        connection.request("GET", "/agent-lab")
+        response = connection.getresponse()
+        assert response.status == 302
+        assert response.getheader("Location") == "/#/projects"
+    finally:
+        web.shutdown()
+        web.server_close()
+        thread.join(timeout=3)
 
 
 def test_detect_endpoints_handles_bare_flask_route():

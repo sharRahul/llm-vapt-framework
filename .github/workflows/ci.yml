@@ -181,6 +181,9 @@ jobs:
       - name: Container smoke test
         run: python scripts/container_smoke_test.py --image vulnoraiq:docker-lab --no-build
 
+      - name: Agent Lab deployment integration tests
+        run: pytest -m docker -q
+
       - name: Collect logs on failure
         if: failure()
         run: docker compose logs vulnoraiq-web

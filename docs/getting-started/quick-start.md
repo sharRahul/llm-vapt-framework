@@ -149,7 +149,7 @@ Treat VulnoraIQ output as framework evidence that requires human review before s
 Open this path after startup:
 
 ```text
-http://localhost:8787/agent-lab
+http://localhost:8787/#/projects
 ```
 
 Use Agent Lab to import a real AI-agent project, configure provider/API key settings, select CPU/GPU Docker runtime mode, build/run the agent, auto-create a target, and launch an authorised scan.

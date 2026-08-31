@@ -79,7 +79,13 @@ class VulnoraIQWebHandler(HostedWebUiHandler):
     def _do_GET_routes(self, path: str, client_ip: str, request_id: str) -> None:
         clean_path = urlparse(path).path
         if clean_path in {"/agent-lab", "/agent-lab/"}:
-            self._serve_static("agent-lab/index.html")
+            # The former static Agent Lab is intentionally retired. Keep old
+            # bookmarks useful without preserving a second, divergent UI.
+            self.send_response(HTTPStatus.FOUND)
+            self.send_header("Location", "/#/projects")
+            self.send_header("Content-Length", "0")
+            self._security_headers()
+            self.end_headers()
             return
         if clean_path == "/api/assistant/config":
             if self._authorised_principal(client_ip, "GET", clean_path, request_id, "view_scans") is None:

@@ -2,13 +2,8 @@
 
 The Agent Lab is an experimental VulnoraIQ WebUI workflow for importing a real AI-agent project, configuring its model provider, running it in Docker, auto-registering a VulnoraIQ target, and launching an authorised scan.
 
-It is available at:
-
-```text
-http://localhost:8787/agent-lab
-```
-
-The React project workspace also embeds this page through the Project Importer area.
+Open **Projects** in the VulnoraIQ console (`http://localhost:8787/#/projects`).
+The old `/agent-lab` path redirects there so existing bookmarks remain useful.
 
 ## Authorized-use boundary
 
@@ -74,7 +69,7 @@ No demo, mock, fake, or fixture projects are created by this workflow. Project I
 
 Use this as the recommended desktop/laptop flow when the AI agent source code already exists on your machine.
 
-1. Open `/agent-lab`.
+1. Open **Projects** in the console.
 2. Choose **Local folder upload**.
 3. Select the local AI-agent source folder in the browser folder picker.
 4. Optionally provide a Project ID. If omitted, VulnoraIQ derives it from the selected top-level folder name.
@@ -234,7 +229,7 @@ After a deploy the WebUI shows a summary card with the detected contract, reacha
 ## Testing flow
 
 1. Start Desktop Mode or Docker Lab Mode.
-2. Open `/agent-lab`.
+2. Open **Projects** in the console.
 3. Import a real agent project using **Local folder upload**, ZIP upload, Git import, or mapped folder refresh.
 4. Select the imported/mapped project and review Project Analysis.
 5. Configure the provider, model, and key/environment values.
