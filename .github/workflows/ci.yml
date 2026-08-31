@@ -56,7 +56,7 @@ jobs:
 
       - name: Upload pytest log
         if: always()
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: vulnoraiq-pytest-log-${{ matrix.python-version }}
           path: reports/output/ci-logs/pytest-${{ matrix.python-version }}.log
@@ -97,7 +97,7 @@ jobs:
 
       - name: Upload WebUI build logs
         if: always() && matrix.python-version == '3.12'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: vulnoraiq-webui-build-log
           path: |
@@ -138,7 +138,7 @@ jobs:
 
       - name: Upload readiness artifacts
         if: matrix.python-version == '3.12'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v7
         with:
           name: vulnoraiq-production-testing-readiness
           path: |
