@@ -113,19 +113,49 @@ def _is_excluded(path: Path) -> bool:
     return False
 
 
+def _tracked_files() -> set[Path] | None:
+    """Every file git tracks, or None when this is not a git checkout.
+
+    Walking the filesystem picks up whatever a developer happens to have on
+    disk. That is how a local `node_modules` (99 MB) and a local
+    `docs/owasp-pdfs/` (66 MB) ended up inside a release package: both are
+    git-ignored, and neither was on the hand-maintained exclusion list. Any
+    future ignored directory would have leaked the same way, including a local
+    `.env`. Git already knows exactly which files belong to the project, so ask
+    it instead of maintaining a denylist that can only ever be incomplete.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "ls-files", "-z"], capture_output=True, text=True, check=False, timeout=60
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    return {Path(name) for name in result.stdout.split("\0") if name}
+
+
 def _iter_release_files() -> list[Path]:
+    tracked = _tracked_files()
     files: list[Path] = []
+
+    def include(path: Path) -> bool:
+        if not path.is_file() or _is_excluded(path):
+            return False
+        # Outside a git checkout (for example rebuilding from an extracted
+        # package) fall back to the exclusion list alone.
+        return tracked is None or path in tracked
+
     for raw_file in ROOT_FILES:
         path = Path(raw_file)
-        if path.exists() and path.is_file() and not _is_excluded(path):
+        if path.exists() and include(path):
             files.append(path)
     for raw_dir in ROOT_DIRS:
         path = Path(raw_dir)
         if not path.exists() or not path.is_dir():
             continue
-        files.extend(item for item in sorted(path.rglob("*")) if item.is_file() and not _is_excluded(item))
-    unique = sorted(set(files), key=lambda item: item.as_posix())
-    return unique
+        files.extend(item for item in sorted(path.rglob("*")) if include(item))
+    return sorted(set(files), key=lambda item: item.as_posix())
 
 
 def _readme_for(platform: str, version: str) -> str:
