@@ -49,17 +49,17 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
       - name: Set up Node for React console build
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
-          node-version: "20"
+          node-version: "22"
 
       - name: Resolve release version
         shell: bash
@@ -99,7 +99,7 @@ jobs:
         if: runner.os != 'Windows'
 
       - name: Upload unsigned package for signing job
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: vulnoraiq-${{ env.VULNORAIQ_RELEASE_VERSION }}-${{ matrix.platform }}
           path: dist/release/vulnoraiq-${{ env.VULNORAIQ_RELEASE_VERSION }}-${{ matrix.platform }}.${{ matrix.extension }}
@@ -122,7 +122,7 @@ jobs:
           fi
 
       - name: Download platform artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v5
         with:
           path: dist/release
           pattern: vulnoraiq-*
@@ -169,7 +169,7 @@ jobs:
           subject-path: dist/release/*
 
       - name: Upload signed release bundle
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: vulnoraiq-${{ env.VULNORAIQ_RELEASE_VERSION }}-signed-release
           path: dist/release/*

@@ -89,6 +89,28 @@ def test_production_fails_without_token(url: str) -> bool:
         return False
 
 
+def test_production_refuses_to_start_without_a_token(image: str) -> bool:
+    """Production mode must refuse to start when no admin token is configured.
+
+    This is the fail-closed property the whole production gate exists for, so a
+    container smoke test should prove it rather than assume it.
+    """
+    name = "vulnoraiq-smoke-nostart"
+    run(["docker", "rm", "-f", name])
+    result = run(["docker", "run", "--rm", "--name", name, "-e", "VULNORAIQ_ENV=production", image], timeout=90)
+    run(["docker", "rm", "-f", name])
+
+    if result.returncode == 0:
+        LOGGER.error("Container started in production mode with no admin token; it must refuse.")
+        return False
+    output = f"{result.stdout}\n{result.stderr}".lower()
+    if "admin_token" not in output and "production" not in output:
+        LOGGER.error("Container exited, but not for the expected reason:\n%s", output[:800])
+        return False
+    LOGGER.info("Production mode correctly refused to start without an admin token")
+    return True
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
@@ -118,12 +140,23 @@ def main() -> None:
     # Clean up any previous container
     run(["docker", "rm", "-f", container_name])
 
+    LOGGER.info("Checking production mode fails closed without a token...")
+    if not test_production_refuses_to_start_without_a_token(image):
+        sys.exit(1)
+
     LOGGER.info("Starting container %s...", container_name)
+    # The image binds 0.0.0.0 inside the container, which production mode only
+    # permits behind a trusted proxy — Docker's published-port proxy is exactly
+    # that here. Configuring the container the way a hardened deployment is
+    # configured is the point: a smoke test that cannot satisfy the product's
+    # own startup checks is testing nothing.
     result = run([
         "docker", "run", "-d", "--name", container_name,
         "-p", f"127.0.0.1:{port}:8787",
         "-e", "VULNORAIQ_ENV=production",
         "-e", "VULNORAIQ_ADMIN_TOKEN=smoke-test-container-token-2024",
+        "-e", "VULNORAIQ_TRUST_PROXY_HEADERS=true",
+        "-e", "VULNORAIQ_TRUSTED_PROXY_CIDRS=127.0.0.0/8,172.16.0.0/12,10.0.0.0/8",
         image,
     ])
     if result.returncode != 0:
@@ -144,6 +177,11 @@ def main() -> None:
             passed += 1
         else:
             failed += 1
+            # A container that never serves has already logged the reason,
+            # usually a production check refusing the configuration. Print it
+            # rather than leaving only "connection refused" in the output.
+            logs = run(["docker", "logs", "--tail", "60", container_name])
+            LOGGER.error("Container did not serve. Last logs:\n%s\n%s", logs.stdout, logs.stderr)
 
         LOGGER.info("Test 2: Readiness endpoint...")
         ok = test_readyz(url)
