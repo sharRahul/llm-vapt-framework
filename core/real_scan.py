@@ -10,7 +10,7 @@ from typing import Any
 
 from core.payload_loader import Payload
 from core.risk_scoring import score_findings
-from core.types import Finding, ScanContext
+from core.types import Confidence, Finding, FindingSource, ScanContext
 from integrations.target_adapters import RealTargetClient, redact
 from modules.registry import ModuleRegistry
 
@@ -48,6 +48,10 @@ def finding_from_evidence(module, evidence_items: list[NormalizedEvidence]) -> F
         severity=severity,
         owasp_id=module.metadata.owasp_id,
         affected_component=module.metadata.component,
+        source=FindingSource.SCANNER_OBSERVED,
+        confidence=Confidence.HIGH if risky else (Confidence.MEDIUM if warn else Confidence.LOW),
+        tool=module.metadata.name,
+        observed_at=datetime.now(timezone.utc),
         evidence={
             "real_target_scan": True,
             "test_category": module.metadata.name,
@@ -63,6 +67,7 @@ def finding_from_evidence(module, evidence_items: list[NormalizedEvidence]) -> F
         recommendation=module.metadata.recommendation,
         mitre_atlas=module.metadata.atlas_mapping,
         score=score,
+        limitations="Responses are redacted and bounded; validate reproducibility and deployment impact before remediation decisions.",
     )
 
 

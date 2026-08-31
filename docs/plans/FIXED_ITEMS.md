@@ -15,3 +15,7 @@ coverage in the test suite; proposed plans are removed once delivered.
 | F8 | The console lacked a top-level heading. | The brand mark is the accessible `h1`. |
 | F9 | Agent Lab had two divergent interfaces. | The React **Projects** view now has folder, ZIP, Git, mapped-folder refresh, delete, runtime variables, port, deploy/remove, and scan controls. `/agent-lab` redirects to `/#/projects`; the static page and package entry are gone. |
 | F10 | Agent Lab deployment was not tested end to end. | Docker CI and a local fixture test cover build, health-gate, auto-target registration, authorised scan, cleanup, and crash cleanup. |
+| F11 | The first header target could be unusable. | The target API provides readiness; the selector defaults to a ready target, labels unavailable entries, and disables scans when none is ready. |
+| F12 | Scan completion interrupted the operator’s work. | Completion refreshes results without switching the current view. |
+| F13 | Scan assets sometimes arrived collapsed. | The navigation pane expands the first asynchronously loaded asset while preserving an explicit collapse. |
+| F14 | Decorative charts entered keyboard navigation. | Recharts accessibility layers are disabled and chart wrappers are hidden from assistive technology; the surrounding summary remains available as text. |

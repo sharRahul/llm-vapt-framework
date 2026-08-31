@@ -62,6 +62,11 @@ class SarifReportGenerator:
                 "help": {"text": str(finding.get("recommendation", "Review the finding and apply compensating controls."))},
                 "properties": {
                     "component": finding.get("affected_component", "Unknown"),
+                    "source": finding.get("source", "unknown"),
+                    "confidence": finding.get("confidence", "unknown"),
+                    "tool": finding.get("tool", "unknown"),
+                    "observed_at": finding.get("observed_at"),
+                    "limitations": finding.get("limitations", ""),
                 },
             }
         return rules
@@ -87,6 +92,11 @@ class SarifReportGenerator:
                 "component": finding.get("affected_component"),
                 "mitre_atlas": finding.get("mitre_atlas", []),
                 "evidence": finding.get("evidence", {}),
+                "source": finding.get("source", "unknown"),
+                "confidence": finding.get("confidence", "unknown"),
+                "tool": finding.get("tool", "unknown"),
+                "observed_at": finding.get("observed_at"),
+                "limitations": finding.get("limitations", ""),
             },
         }
 

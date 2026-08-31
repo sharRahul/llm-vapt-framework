@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from enum import Enum
 from typing import Any, Protocol
 
 
@@ -14,6 +15,20 @@ class TargetClient(Protocol):
         """Send an assessment input to the target and return a text response."""
 
 
+class FindingSource(str, Enum):
+    """How the assessment established a finding."""
+
+    SCANNER_OBSERVED = "scanner_observed"
+    INFERRED = "inferred"
+    AI_ASSISTED = "ai_assisted"
+
+
+class Confidence(str, Enum):
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
 @dataclass(slots=True)
 class Finding:
     title: str
@@ -21,10 +36,20 @@ class Finding:
     severity: str
     owasp_id: str
     affected_component: str
+    source: FindingSource
+    confidence: Confidence
+    tool: str
+    observed_at: datetime
     evidence: dict[str, Any] = field(default_factory=dict)
     recommendation: str = ""
     mitre_atlas: list[str] = field(default_factory=list)
     score: float | None = None
+    limitations: str = "Human review is required before acting on this finding."
+    analysis_provenance: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if self.source is FindingSource.SCANNER_OBSERVED and self.analysis_provenance.get("assistant"):
+            raise ValueError("scanner_observed findings cannot include assistant analysis provenance")
 
 
 @dataclass(slots=True)

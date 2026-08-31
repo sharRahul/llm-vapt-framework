@@ -12,8 +12,9 @@ import { ChartTooltip } from "./ChartTooltip";
 
 export function BurnDownChart({ data }: { data: VulnerabilityTrendPoint[] }) {
   return (
-    <ResponsiveContainer width="100%" height="100%">
-      <AreaChart data={data} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
+    <div className="h-full w-full" aria-hidden="true">
+      <ResponsiveContainer width="100%" height="100%">
+      <AreaChart data={data} margin={{ top: 8, right: 8, left: -18, bottom: 0 }} accessibilityLayer={false}>
         <defs>
           <linearGradient id="grad-open" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="var(--sev-high)" stopOpacity={0.28} />
@@ -55,6 +56,7 @@ export function BurnDownChart({ data }: { data: VulnerabilityTrendPoint[] }) {
           fill="url(#grad-remediated)"
         />
       </AreaChart>
-    </ResponsiveContainer>
+      </ResponsiveContainer>
+    </div>
   );
 }

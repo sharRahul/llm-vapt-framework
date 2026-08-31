@@ -90,6 +90,11 @@ function toFinding(finding: BackendFinding, scanId: string, index: number): Find
       policyStatus: state?.status === "fixed" ? "pass" : "manual_review",
       complianceTags: [],
     },
+    source: String(finding.source || "scanner_observed"),
+    confidence: String(finding.confidence || "medium"),
+    tool: String(finding.tool || "VulnoraIQ scanner"),
+    observedAt: String(finding.observed_at || ""),
+    limitations: String(finding.limitations || "Human review is required before acting on this finding."),
     report: [
       { title: "Evidence", body: evidence },
       { title: "Recommendation", body: recommendation },
@@ -262,7 +267,9 @@ function ConsoleInner() {
         source.close();
         scanSourceRef.current = null;
         if (payload.type === "scan_completed") {
-          void refreshScanFindings(scan.id, { ...scan, status: "completed" });
+          // Preserve the operator's current context. A completed scan must not
+          // abruptly pull them away from the view they were using.
+          void refreshScanFindings(scan.id, { ...scan, status: "completed" }, undefined, false);
         } else {
           // The backend reports why a scan was rejected; show that, not a generic message.
           const reason = payload.message || "Scan failed";

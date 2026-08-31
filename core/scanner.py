@@ -13,7 +13,7 @@ from core.production_detection import ProductionOwaspDetector
 from core.real_scan import run_real_target_modules
 from core.runtime_targets import merge_into as merge_runtime_targets
 from core.test_runner import TestRunner
-from core.types import Finding, ScanContext, ScanResult, TargetClient
+from core.types import Confidence, Finding, FindingSource, ScanContext, ScanResult, TargetClient
 from integrations.target_adapters import RealTargetClient
 
 
@@ -157,6 +157,10 @@ class Scanner:
                     severity="info",
                     owasp_id=",".join(item.get("owasp_llm_top10", [])) or "AITG",
                     affected_component=item["owasp_ai_testing_guide_section"],
+                    source=FindingSource.SCANNER_OBSERVED,
+                    confidence=Confidence.MEDIUM,
+                    tool="owasp_ai_testing_guide_manifest",
+                    observed_at=context.started_at,
                     evidence={
                         "aitg_test_id": item["id"],
                         "status": "passed",
@@ -167,6 +171,7 @@ class Scanner:
                     },
                     recommendation="Review mapped evidence and validate applicability with an authorised system owner before making assurance claims.",
                     mitre_atlas=item.get("mitre_atlas", []),
+                    limitations="Synthetic fixture coverage maps test evidence but does not establish real-world exploitability.",
                 )
             )
         return findings

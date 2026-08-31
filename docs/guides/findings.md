@@ -28,7 +28,12 @@ chain is written by a language model.
 | `owasp_id` | OWASP LLM Top 10 (2025) category, or `AITG` for AI Testing Guide coverage. |
 | `mitre_atlas` | Mapped MITRE ATLAS technique identifiers. |
 | `affected_component` | The part of the target the finding concerns. |
-| `evidence` | Structured record: the request, the response, the oracle decision, confidence, and stated limitations. |
+| `source` | `scanner_observed`, `inferred`, or `ai_assisted`; the console labels it next to severity. |
+| `tool` | The scanner or evaluator that produced the finding. |
+| `observed_at` | UTC timestamp for the underlying observation. |
+| `confidence` | Structured `low`, `medium`, or `high` confidence. |
+| `limitations` | What the evidence does not establish. |
+| `evidence` | Structured request, response, and oracle-decision material specific to the tool. |
 | `recommendation` | Advisory remediation guidance. |
 | `score` | Numeric risk score where the module produces one. |
 
@@ -38,8 +43,8 @@ Request and response evidence is redacted before storage: header names matching
 
 ## Confidence and limitations
 
-Modules record their own confidence and limitations in `evidence` rather than
-implying certainty. Synthetic fixture coverage is labelled as such: it proves the
+Confidence and limitations are required finding fields rather than conventions
+inside the flexible evidence payload. Synthetic fixture coverage is labelled as such: it proves the
 check runs, not that a real system is safe. A run against a fixture target and a
 run against a real authorised system are different claims, and the evidence says
 which one you have.

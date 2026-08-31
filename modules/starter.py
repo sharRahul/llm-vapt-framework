@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from core.evidence_model import InteractionEvidence, OwaspOracleRegistry
 from core.mitre_atlas import MitreAtlasMapping
 from core.payload_loader import Payload
-from core.types import Finding, ScanContext
+from core.types import Confidence, Finding, FindingSource, ScanContext
 from modules.base import ModuleMetadata
 
 
@@ -55,9 +55,14 @@ class StarterAssessmentModule:
             severity=severity,
             owasp_id=self.metadata.owasp_id,
             affected_component=self.metadata.component,
+            source=FindingSource.SCANNER_OBSERVED,
+            confidence=Confidence.MEDIUM,
+            tool=self.metadata.name,
+            observed_at=context.started_at,
             evidence=evidence,
             recommendation=self.metadata.recommendation,
             mitre_atlas=atlas_mapping or self.metadata.atlas_mapping,
+            limitations="Safe local oracle checks are bounded evidence and require human validation in the deployment context.",
         )
 
     def _run_interactions(

@@ -13,54 +13,7 @@ Delivered work is recorded in [Fixed items](FIXED_ITEMS.md).
 
 ## Still to fix
 
-### TBF-2 — The first target offered is one that always fails · **Medium**
-
-**What happens.** The header target selector defaults to the first target
-alphabetically. With the shipped test config that is
-`Placeholder Custom HTTP Agent`, whose endpoint is `https://example.invalid` —
-so the first scan a new user runs always fails.
-
-**Why it matters.** The very first action in the product fails, for a reason
-that is about configuration rather than anything the user did.
-
-**Fix.** Default to the first target that passes validation; mark unusable
-targets in the selector and disable **Run Scan** while one is selected. Better:
-have `GET /api/targets` return a `ready` flag per target so both the console and
-the CLI agree on which targets can actually be assessed.
-
----
-
-### TBF-3 — Live scan progress is unobservable at the end of a scan · **Low**
-
-**What happens.** The "Live backend scan" panel renders only on the Overview,
-but on `scan_completed` the app switches the user to the Workspace. By the time
-you look, the panel is on a view you have left.
-
-**Fix.** Either keep the progress panel in the shell (visible on every view while
-a scan runs), or stop force-switching views and surface completion as a toast
-with a link.
-
----
-
-### TBF-4 — Asset auto-expansion depends on render timing · **Low**
-
-**What happens.** `AssetNavigationPane` seeds its expanded state with a lazy
-`useState` initialiser reading `assets[0]?.id`. Assets arrive asynchronously, so
-if the pane mounts before the first asset lands, nothing is ever auto-expanded
-and the user sees a collapsed card with no findings.
-
-**Fix.** Derive the expanded state from the selected finding's asset, or sync it
-in an effect when `assets` changes.
-
----
-
-### TBF-5 — SVG chart internals are in the tab order · **Low**
-
-**What happens.** Tabbing through the console lands on an SVG `<g>` element and
-on `body`. Neither is interactive and neither is labelled.
-
-**Fix.** Mark decorative chart SVGs `aria-hidden="true"` / `focusable="false"`,
-and remove the stray tabindex.
+No currently known console defects from this browser-review pass.
 
 ---
 

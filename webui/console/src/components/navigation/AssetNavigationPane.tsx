@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Layers, Search, X } from "lucide-react";
 import type { Asset, Finding } from "@/types";
 import { SEVERITY_ORDER } from "@/lib/severity";
@@ -33,6 +33,15 @@ export function AssetNavigationPane({
     const first = assets[0]?.id;
     return first ? { [first]: true } : {};
   });
+
+  // Scan data is loaded after this pane mounts. Expand the first asset once it
+  // arrives, without reopening an asset the operator explicitly collapsed.
+  useEffect(() => {
+    setExpanded((previous) => {
+      if (Object.keys(previous).length || !assets[0]?.id) return previous;
+      return { [assets[0].id]: true };
+    });
+  }, [assets]);
 
   const visibleAssets = useMemo(() => {
     const q = query.trim().toLowerCase();

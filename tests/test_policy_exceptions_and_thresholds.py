@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from core.approval_evidence import ApprovalEvidenceRegistry
 from core.exception_registry import PolicyExceptionRegistry
 from core.policy_engine import PolicyEngine
-from core.types import Finding, PolicyResult, ScanResult
+from core.types import Confidence, Finding, FindingSource, PolicyResult, ScanResult
 
 
 def test_severity_threshold_policy_passes_demo_scan() -> None:
@@ -19,6 +19,10 @@ def test_severity_threshold_policy_passes_demo_scan() -> None:
                 severity="info",
                 owasp_id="LLM00:2025",
                 affected_component="demo",
+                source=FindingSource.SCANNER_OBSERVED,
+                confidence=Confidence.MEDIUM,
+                tool="test",
+                observed_at=datetime.now(timezone.utc),
             )
         ],
         started_at=datetime.now(timezone.utc),
@@ -42,6 +46,10 @@ def test_severity_threshold_policy_fails_critical() -> None:
                 severity="critical",
                 owasp_id="LLM00:2025",
                 affected_component="demo",
+                source=FindingSource.SCANNER_OBSERVED,
+                confidence=Confidence.MEDIUM,
+                tool="test",
+                observed_at=datetime.now(timezone.utc),
             )
         ],
         started_at=datetime.now(timezone.utc),

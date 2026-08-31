@@ -101,6 +101,11 @@ export interface Finding {
   cve: CveMetadata;
   cwe: CweMetadata;
   intelligence: IntelligenceMapping;
+  source: string;
+  confidence: string;
+  tool: string;
+  observedAt: string;
+  limitations: string;
   /** Evidence / attack scenario / impact / guidance / validation / references. */
   report: MarkdownSection[];
 }
@@ -240,6 +245,11 @@ export interface BackendFinding {
   recommendation?: string;
   mitre_atlas?: string[];
   score?: number | null;
+  source?: string;
+  confidence?: string;
+  tool?: string;
+  observed_at?: string;
+  limitations?: string;
   status?: FindingStatus | string;
   remediation_state?: FindingMutationState;
 }

@@ -17,9 +17,9 @@ export function SeverityDonutChart({
 
   return (
     <div className="flex h-full items-center gap-4">
-      <div className="relative h-[150px] w-[150px] shrink-0">
+      <div className="relative h-[150px] w-[150px] shrink-0" aria-hidden="true">
         <ResponsiveContainer width="100%" height="100%">
-          <PieChart>
+          <PieChart accessibilityLayer={false}>
             <Pie
               data={chartData}
               dataKey="value"

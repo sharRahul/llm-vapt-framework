@@ -34,6 +34,9 @@ class ResultsEngine:
     def _finding_to_dict(finding: Finding) -> dict[str, Any]:
         data = asdict(finding)
         data["severity"] = finding.severity.lower()
+        data["source"] = finding.source.value
+        data["confidence"] = finding.confidence.value
+        data["observed_at"] = finding.observed_at.isoformat()
         return data
 
     @staticmethod

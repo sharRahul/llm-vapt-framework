@@ -47,6 +47,7 @@ export function AnalysisWorkspace({
   const [split, setSplit] = useState(true);
   const [aiExplanation, setAiExplanation] = useState<string | null>(null);
   const status = statusStyles[finding.status];
+  const provenanceLabel = finding.source === "ai_assisted" ? "AI-assisted" : finding.source === "inferred" ? "Inferred" : "Observed";
 
   // Fetch a model-grounded explanation for the selected finding. Falls back
   // silently to the finding's own summary if the assistant is unavailable.
@@ -83,6 +84,9 @@ export function AnalysisWorkspace({
         <div className="flex flex-wrap items-center gap-2">
           <SeverityBadge severity={finding.severity} withIcon />
           <RiskScoreBadge score={finding.riskScore} size="md" />
+          <span className="inline-flex items-center rounded-sm border border-border bg-muted px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-muted-foreground" title={`${finding.tool} · ${finding.confidence} confidence`}>
+            Provenance · {provenanceLabel}
+          </span>
           <span
             className={cn(
               "inline-flex items-center rounded-sm border px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide",
@@ -117,6 +121,7 @@ export function AnalysisWorkspace({
             ) : null}
           </p>
         </div>
+        <p className="mt-2 text-xs text-muted-foreground">{finding.tool} · {finding.confidence} confidence{finding.observedAt ? ` · observed ${new Date(finding.observedAt).toLocaleString()}` : ""}</p>
       </header>
 
       <div className="flex-1 overflow-y-auto scrollbar-thin p-4">
