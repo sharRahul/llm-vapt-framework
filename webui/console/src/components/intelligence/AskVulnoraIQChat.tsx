@@ -3,6 +3,7 @@ import { Bot, Loader2, SendHorizonal, Settings2, ShieldQuestion } from "lucide-r
 import type { ChatMessage as ChatMessageType, Finding } from "@/types";
 import { Button } from "@/components/ui/button";
 import { ChatMessage } from "./ChatMessage";
+import { apiGet, apiPost } from "@/lib/api";
 
 const starterPrompts: string[] = [
   "Explain this finding in plain language.",
@@ -29,17 +30,6 @@ interface AssistantConfig {
   default_system_prompt: string;
 }
 
-async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, { credentials: "same-origin", ...options });
-  if (!response.ok) throw new Error(await response.text());
-  return response.json() as Promise<T>;
-}
-
-async function csrfToken(): Promise<string> {
-  const data = await api<{ csrf_token: string }>("/api/csrf-token");
-  return data.csrf_token;
-}
-
 export function AskVulnoraIQChat({ finding }: { finding: Finding }) {
   const [messages, setMessages] = useState<ChatMessageType[]>([]);
   const [input, setInput] = useState("");
@@ -57,7 +47,7 @@ export function AskVulnoraIQChat({ finding }: { finding: Finding }) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    void api<AssistantConfig>("/api/assistant/config")
+    void apiGet<AssistantConfig>("/api/assistant/config")
       .then((config) => {
         setAllowedModels(config.allowed_models?.length ? config.allowed_models : [config.default_model]);
         setControls({
@@ -97,20 +87,12 @@ export function AskVulnoraIQChat({ finding }: { finding: Finding }) {
     setError(null);
 
     try {
-      const token = await csrfToken();
-      const response = await api<{ content: string; model: string; provider: string; latency_ms?: number }>(
-        "/api/assistant/chat",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "X-CSRF-Token": token },
-          body: JSON.stringify({
+      const response = await apiPost<{ content: string; model: string; provider: string; latency_ms?: number }>("/api/assistant/chat", {
             message: trimmed,
             messages: nextMessages.map(({ role, content }) => ({ role, content })),
             finding,
             controls,
-          }),
-        },
-      );
+          });
       setMessages((prev) =>
         prev.map((m) =>
           m.id === pending.id

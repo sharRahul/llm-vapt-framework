@@ -4,18 +4,16 @@ import json
 import logging
 
 from webui.auth import AuthPrincipal
-from webui.hosted_server import AUDIT_LOG, _audit_structured
+from webui.web_security import AUDIT_LOG, audit_event
 
 
 def _setup_caplog(caplog) -> None:
     caplog.set_level(logging.INFO, logger="vulnoraiq.audit")
     AUDIT_LOG.propagate = True
-
-
 def test_audit_includes_required_fields(caplog) -> None:
     _setup_caplog(caplog)
     p = AuthPrincipal("alice", "admin", {"view_scans"}, authenticated=True)
-    _audit_structured("test_event", p, request_id="req123", client_ip="10.0.0.1",
+    audit_event("test_event", p, request_id="req123", client_ip="10.0.0.1",
                       method="GET", path="/api/scans", status=200, detail="test")
     records = [r for r in caplog.records if r.name == "vulnoraiq.audit"]
     assert len(records) >= 1
@@ -31,12 +29,10 @@ def test_audit_includes_required_fields(caplog) -> None:
     assert data["path"] == "/api/scans"
     assert data["status"] == 200
     assert data["detail"] == "test"
-
-
 def test_audit_does_not_leak_tokens(caplog) -> None:
     _setup_caplog(caplog)
     p = AuthPrincipal("admin_user", "admin", {"view_scans"}, authenticated=True)
-    _audit_structured("auth_failure", p, request_id="req1", detail="token attempt with value=secret123")
+    audit_event("auth_failure", p, request_id="req1", detail="token attempt with value=secret123")
     records = [r for r in caplog.records if r.name == "vulnoraiq.audit"]
     assert len(records) >= 1
     log_msg = records[-1].message
@@ -44,12 +40,10 @@ def test_audit_does_not_leak_tokens(caplog) -> None:
     assert "secret123" in data.get("detail", "")
     for field in ("user", "role", "method", "path"):
         assert "secret123" not in str(data.get(field, ""))
-
-
 def test_audit_sanitizes_newlines(caplog) -> None:
     _setup_caplog(caplog)
     p = AuthPrincipal("test_user", "analyst", {"view_scans"}, authenticated=True)
-    _audit_structured("test_event", p, detail="multi\nline\rdetail")
+    audit_event("test_event", p, detail="multi\nline\rdetail")
     records = [r for r in caplog.records if r.name == "vulnoraiq.audit"]
     assert len(records) >= 1
     data = json.loads(records[-1].message)
@@ -57,8 +51,6 @@ def test_audit_sanitizes_newlines(caplog) -> None:
     assert "\\r" in data["detail"]
     assert "\n" not in data["detail"]
     assert "\r" not in data["detail"]
-
-
 def test_audit_event_names(caplog) -> None:
     _setup_caplog(caplog)
     p = AuthPrincipal("admin", "admin", {"view_scans"}, authenticated=True)
@@ -69,7 +61,7 @@ def test_audit_event_names(caplog) -> None:
         "artifact_download", "production_config_validation_failed",
     ]
     for ev in events:
-        _audit_structured(ev, p, request_id="req1", detail=ev)
+        audit_event(ev, p, request_id="req1", detail=ev)
     records = [r for r in caplog.records if r.name == "vulnoraiq.audit"]
     logged_events = set()
     for r in records:

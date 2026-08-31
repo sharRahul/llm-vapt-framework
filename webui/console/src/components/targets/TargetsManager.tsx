@@ -17,6 +17,7 @@ import {
 import { Button } from "@/components/ui/button";
 import type { ConnectivityResult, ScanEvent, ScanJob, TargetConfig, TargetRecord } from "@/types";
 import { cn } from "@/lib/utils";
+import { apiGet, apiPost } from "@/lib/api";
 
 const ENVIRONMENTS = ["local", "lab", "internal", "production-like"];
 const SCAN_PROFILES = ["baseline", "rag", "agent", "full", "owasp-aitg-full"];
@@ -42,17 +43,6 @@ const defaultTarget = (): TargetConfig => ({
   environment: "local",
   allow_external: false,
 });
-
-async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, { credentials: "same-origin", ...options });
-  if (!response.ok) throw new Error(await response.text());
-  return response.json() as Promise<T>;
-}
-
-async function csrfToken(): Promise<string> {
-  const data = await api<{ csrf_token: string }>("/api/csrf-token");
-  return data.csrf_token;
-}
 
 function parseJsonField(value: string, fallback: unknown): unknown {
   if (!value.trim()) return fallback;
@@ -119,7 +109,7 @@ export function TargetsManager() {
     setLoading(true);
     setError(null);
     try {
-      const data = await api<{ targets: Record<string, TargetConfig> }>("/api/targets");
+      const data = await apiGet<{ targets: Record<string, TargetConfig> }>("/api/targets");
       const records = Object.entries(data.targets || {}).map(([id, config]) => ({ id, config }));
       setTargets(records);
       const next = records.find((record) => record.id === selectedId) || records[0];
@@ -138,7 +128,7 @@ export function TargetsManager() {
 
   async function loadAgentBaseUrls() {
     try {
-      const data = await api<{ agents: { id: string; ports?: string }[] }>("/api/agents");
+      const data = await apiGet<{ agents: { id: string; ports?: string }[] }>("/api/agents");
       const map: Record<string, string> = {};
       for (const agent of data.agents || []) {
         // ports look like "0.0.0.0:8099->8099/tcp, [::]:8099->8099/tcp"; take the first host port.
@@ -153,7 +143,7 @@ export function TargetsManager() {
 
   async function loadJobs() {
     try {
-      const data = await api<{ jobs: ScanJob[] }>("/api/scans");
+      const data = await apiGet<{ jobs: ScanJob[] }>("/api/scans");
       setJobs(data.jobs || []);
     } catch {
       // Older or unauthenticated deployments can still manage targets without scan history.
@@ -192,13 +182,7 @@ export function TargetsManager() {
     setSaving(true);
     setError(null);
     try {
-      const token = await csrfToken();
-      const target = buildTarget();
-      await api("/api/targets/save", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-CSRF-Token": token },
-        body: JSON.stringify({ id: draftId, target }),
-      });
+      await apiPost("/api/targets/save", { id: draftId, target: buildTarget() });
       await loadTargets();
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc));
@@ -212,12 +196,7 @@ export function TargetsManager() {
     setSaving(true);
     setError(null);
     try {
-      const token = await csrfToken();
-      await api("/api/targets/delete", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-CSRF-Token": token },
-        body: JSON.stringify({ id: draftId }),
-      });
+      await apiPost("/api/targets/delete", { id: draftId });
       await loadTargets();
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc));
@@ -232,12 +211,7 @@ export function TargetsManager() {
     setConnectivity(null);
     try {
       if (!targets.some((target) => target.id === draftId)) await saveTarget();
-      const token = await csrfToken();
-      const data = await api<ConnectivityResult>(`/api/targets/${encodeURIComponent(draftId)}/validate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-CSRF-Token": token },
-        body: JSON.stringify({}),
-      });
+      const data = await apiPost<ConnectivityResult>(`/api/targets/${encodeURIComponent(draftId)}/validate`, {});
       setConnectivity(data);
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc));
@@ -271,12 +245,7 @@ export function TargetsManager() {
     setScanning(true);
     setError(null);
     try {
-      const token = await csrfToken();
-      const job = await api<ScanJob>("/api/scans", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-CSRF-Token": token },
-        body: JSON.stringify({ target: draftId, profile: scanProfile, authorised: true }),
-      });
+      const job = await apiPost<ScanJob>("/api/scans", { target: draftId, profile: scanProfile, authorised: true });
       setJobs((prev) => [job, ...prev.filter((item) => item.id !== job.id)]);
       connectScanEvents(job.id);
     } catch (exc) {

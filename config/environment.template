@@ -1,0 +1,55 @@
+# VulnoraIQ environment template.
+#
+# Copy this file to a local, untracked `.env` at the repository root and edit it:
+#
+#   cp config/environment.template .env
+#
+# `.env` is git-ignored and must stay that way. This template is deliberately
+# NOT named `.env.*` so it can never be mistaken for a real environment file.
+# Every supported variable is documented in
+# docs/reference/environment-variables.md.
+#
+# Replace every <placeholder>. Do not commit real credentials anywhere.
+
+# --- Run mode ---------------------------------------------------------------
+# desktop    - VulnoraIQ runs on the host; Docker is used only for agents.
+# docker_lab - the full containerised lab started by docker compose.
+VULNORAIQ_RUN_MODE=desktop
+
+# --- Authentication ---------------------------------------------------------
+# local_admin - single-user session, loopback binds only, no token needed.
+# token       - bearer tokens below; required when VULNORAIQ_ENV=production.
+VULNORAIQ_AUTH_MODE=local_admin
+
+# Uncomment for token mode. The admin token must be at least 20 characters and
+# should come from a password manager or secret store, not from this file.
+# VULNORAIQ_AUTH_MODE=token
+# VULNORAIQ_ADMIN_TOKEN=<random-token-min-20-chars>
+# VULNORAIQ_ANALYST_TOKEN=<random-token>
+# VULNORAIQ_VIEWER_TOKEN=<random-token>
+
+# --- Network ----------------------------------------------------------------
+VULNORAIQ_HOST=127.0.0.1
+VULNORAIQ_PORT=8787
+
+# Only when running behind a reverse proxy you control.
+# VULNORAIQ_TRUST_PROXY_HEADERS=true
+# VULNORAIQ_TRUSTED_PROXY_CIDRS=10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+
+# --- Limits -----------------------------------------------------------------
+VULNORAIQ_MAX_CONCURRENT_SCANS=2
+VULNORAIQ_SCAN_QUEUE_LIMIT=10
+VULNORAIQ_RATE_LIMIT_MAX=60
+VULNORAIQ_MAX_REQUEST_BODY=10485760
+
+# --- Scope control ----------------------------------------------------------
+# Optional deployment-wide allowlist. When set, no other host is ever contacted.
+# VULNORAIQ_ALLOWED_TARGET_HOSTS=agent.internal.example,*.lab.example
+
+# --- Logging ----------------------------------------------------------------
+VULNORAIQ_LOG_LEVEL=INFO
+
+# --- Target credentials -----------------------------------------------------
+# A target config may name its own credential variable via `auth_token_env`.
+# Supply those from your secret store:
+# MY_AGENT_TOKEN=<from-secret-manager>

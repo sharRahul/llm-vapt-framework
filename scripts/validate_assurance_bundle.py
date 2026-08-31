@@ -10,9 +10,9 @@ REQUIRED = {
     "assurance/checksums.sha256",
     "assurance/test_inventory.txt",
     "assurance/repository_metadata.json",
-    "docs/INDEPENDENT_ASSURANCE_REVIEW.md",
-    "docs/SAFETY_MODEL.md",
-    "docs/TARGET_CONFIGURATION.md",
+    "docs/security/security-model.md",
+    "docs/security/assurance.md",
+    "docs/guides/targets.md",
     "benchmarks/fixtures/aitg/aitg_32_manifest.yaml",
 }
 FORBIDDEN = ("independently certified", "externally assured", "guaranteed vulnerability detection")

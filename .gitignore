@@ -1,39 +1,98 @@
+# ---------------------------------------------------------------------------
+# Environment files — never commit, no exceptions.
+# The copyable template lives at config/environment.template (deliberately not
+# named .env.*), and every variable is documented in
+# docs/reference/environment-variables.md.
+# ---------------------------------------------------------------------------
+.env
+.env.*
+**/.env
+**/.env.*
+
+# Secrets and credential material
+*.key
+*.pem
+*.pfx
+*.p12
+config/local*.yaml
+config/web_users.local.yaml
+config/*_secret*.yaml
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
 __pycache__/
 *.py[cod]
-.pytest_cache/
-.pytest_tmp/
+*.egg-info/
 .venv/
 venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.pytest_tmp/
+
+# ---------------------------------------------------------------------------
+# Node / frontend
+# ---------------------------------------------------------------------------
+node_modules/
+webui/console/dist/
+webui/console/node_modules/
+
+# ---------------------------------------------------------------------------
+# Build and packaging output
+# ---------------------------------------------------------------------------
 build/
 dist/
-*.egg-info/
-node_modules/
+*.whl
+*.tar.gz
+
+# ---------------------------------------------------------------------------
+# Test, coverage and browser-automation output
+# ---------------------------------------------------------------------------
+.coverage
+coverage.xml
+htmlcov/
 playwright-report/
 test-results/
 .playwright-mcp/
 .manual-test-work/
-agent-lab/
+
+# ---------------------------------------------------------------------------
+# Runtime state, generated reports and local databases
+# ---------------------------------------------------------------------------
+*.db
+*.db-shm
+*.db-wal
+*.log
 scan-reports/
-projects/*
-!projects/.gitkeep
-# Generated report output — all of it stays out of GitHub
 reports/output/*
 !reports/output/.gitkeep
-.env
-.env.*
-!.env.production.example
-!.env.docker.example
-*.key
-*.pem
-*.db
-config/local*.yaml
-config/web_users.local.yaml
-config/*_secret*.yaml
-projects/Raiker-main.zip
-reports/docker-lab/runtime_targets.yaml
-# Local model training pipeline — kept off GitHub entirely (scripts, data, knowledge, weights)
+reports/docker-lab/
+
+# Agent Lab imports and mapped agent projects are user content, not source.
+agent-lab/
+projects/*
+!projects/.gitkeep
+
+# Local model training pipeline (scripts, datasets, knowledge, weights).
 model/
-.claude/
-docs/ASSISTANT_MODEL.md
-# Raw OWASP source PDFs (large, binary). Extracted text under model/knowledge/ is tracked instead.
+# Raw OWASP source PDFs are large binaries; extracted text is what gets used.
 docs/owasp-pdfs/
+
+# Local-only working material that must not reach GitHub.
+docs/local/
+
+# ---------------------------------------------------------------------------
+# Editor, tooling and OS metadata
+# ---------------------------------------------------------------------------
+.claude/
+.agents/
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Docker Compose overrides are per-developer, not shared configuration.
+docker-compose.override.yml

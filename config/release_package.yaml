@@ -15,16 +15,13 @@ include_paths:
   - launch-vulnoraiq-docker-lab.sh
   - docker-compose.yml
   - Dockerfile
-  - .env.docker.example
+  - config/environment.template
   - VulnoraIQ.desktop
   - docs/README.md
-  - docs/IMPLEMENTATION_STATUS.md
-  - docs/USER_GUIDE.md
-  - docs/AGENT_LAB.md
-  - docs/MANUAL_TEST_PLAN.md
-  - docs/LLM_MANUAL_TESTING_PROMPT.md
-  - docs/WEBUI_GUIDE.md
-  - docs/MITRE_ATLAS_AI_MATRIX.md
+  - docs/getting-started/
+  - docs/guides/
+  - docs/security/
+  - docs/reference/
   - docs/owasp/
   - config/default.yaml
   - config/targets.yaml
@@ -59,6 +56,7 @@ include_paths:
   - webui/static/agent-lab/
 rules:
   - Include launcher assets, current operator docs, static WebUI assets, and non-sensitive configuration files.
+  - Never include a file whose name begins with .env; ship config/environment.template instead.
   - Include third-party notices whenever generated ATLAS-derived documentation is included.
   - Exclude private operational material, local runtime state, and real client evidence.
   - Review generated reports before publishing a release package.

@@ -10,9 +10,9 @@ def main() -> None:
     output_root.mkdir(parents=True, exist_ok=True)
     job_store.parent.mkdir(parents=True, exist_ok=True)
 
-    from webui.hosted_server import main as hosted_main  # noqa: PLC0415
+    from webui.server import main as serve_web_ui  # noqa: PLC0415
 
-    hosted_main()
+    serve_web_ui()
 
 
 if __name__ == "__main__":

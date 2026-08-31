@@ -57,9 +57,11 @@ export function HeaderBar({
           <ShieldHalf className="size-5" />
         </span>
         <div className="min-w-0 leading-none">
-          <p className="truncate font-sans text-sm font-extrabold tracking-tight text-foreground">
+          {/* The console needs exactly one top-level heading; without it the
+              page has no h1 for screen readers or document outline. */}
+          <h1 className="truncate font-sans text-sm font-extrabold tracking-tight text-foreground">
             VulnoraIQ
-          </p>
+          </h1>
           <p className="hidden truncate text-[10px] font-medium uppercase tracking-wide text-muted-foreground sm:block">
             AI Security Operations
           </p>

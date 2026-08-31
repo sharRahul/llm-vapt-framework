@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { apiGet, apiPost } from "@/lib/api";
 
 interface AgentRecord {
   container_id: string;
@@ -30,17 +31,6 @@ interface AgentTemplate {
   display_name?: string;
   description?: string;
   image?: string;
-}
-
-async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, { credentials: "same-origin", ...options });
-  if (!response.ok) throw new Error(await response.text());
-  return response.json() as Promise<T>;
-}
-
-async function csrfToken(): Promise<string> {
-  const data = await api<{ csrf_token: string }>("/api/csrf-token");
-  return data.csrf_token;
 }
 
 function statusColor(status: string): string {
@@ -81,12 +71,7 @@ export function AgentHost() {
     if (!tplKey.trim() || !tplImage.trim()) return;
     setError(null);
     try {
-      const token = await csrfToken();
-      await api("/api/agents/templates", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-CSRF-Token": token },
-        body: JSON.stringify({ key: tplKey.trim(), image: tplImage.trim(), port: tplPort.trim(), endpoint: tplEndpoint.trim() }),
-      });
+      await apiPost("/api/agents/templates", { key: tplKey.trim(), image: tplImage.trim(), port: tplPort.trim(), endpoint: tplEndpoint.trim() });
       setTplKey(""); setTplImage(""); setTplPort(""); setTplEndpoint("/"); setShowAddTemplate(false);
       await loadAgents();
     } catch (exc) {
@@ -97,11 +82,7 @@ export function AgentHost() {
   async function deleteTemplate(key: string) {
     setError(null);
     try {
-      const token = await csrfToken();
-      await api(`/api/agents/templates/${encodeURIComponent(key)}/delete`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-CSRF-Token": token },
-      });
+      await apiPost(`/api/agents/templates/${encodeURIComponent(key)}/delete`);
       await loadAgents();
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc));
@@ -112,7 +93,7 @@ export function AgentHost() {
     setLoading(true);
     setError(null);
     try {
-      const data = await api<{ agents: AgentRecord[]; templates: Record<string, AgentTemplate> }>("/api/agents");
+      const data = await apiGet<{ agents: AgentRecord[]; templates: Record<string, AgentTemplate> }>("/api/agents");
       setAgents(data.agents || []);
       setTemplates(data.templates || {});
     } catch (exc) {
@@ -126,7 +107,6 @@ export function AgentHost() {
     setDeploying(true);
     setError(null);
     try {
-      const token = await csrfToken();
       const body: Record<string, unknown> = { id: agentId };
       if (templateKey) {
         body.template = templateKey;
@@ -145,11 +125,7 @@ export function AgentHost() {
           body.env = env;
         }
       }
-      await api("/api/agents/deploy", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-CSRF-Token": token },
-        body: JSON.stringify(body),
-      });
+      await apiPost("/api/agents/deploy", body);
       await loadAgents();
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc));
@@ -167,12 +143,7 @@ export function AgentHost() {
   async function agentAction(agentId: string, action: "start" | "stop" | "remove") {
     setError(null);
     try {
-      const token = await csrfToken();
-      await api(`/api/agents/${encodeURIComponent(agentId)}/${action}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "X-CSRF-Token": token },
-        body: "{}",
-      });
+      await apiPost(`/api/agents/${encodeURIComponent(agentId)}/${action}`);
       if (action === "remove") setLogsFor(null);
       await loadAgents();
     } catch (exc) {
@@ -182,7 +153,7 @@ export function AgentHost() {
 
   async function loadLogs(agentId: string) {
     try {
-      const data = await api<{ logs: string }>(`/api/agents/${encodeURIComponent(agentId)}/logs`);
+      const data = await apiGet<{ logs: string }>(`/api/agents/${encodeURIComponent(agentId)}/logs`);
       setLogs(data.logs || "");
     } catch {
       setLogs("(unable to retrieve logs)");

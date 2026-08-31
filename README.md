@@ -1,61 +1,76 @@
 # VulnoraIQ
 
-**VulnoraIQ** is a self-hosted internal application for controlled laptop/server AI security testing of LLM applications, RAG systems, AI agents, and orchestration layers.
+Self-hosted AI security assessment for LLM applications, RAG systems, AI agents,
+and the orchestration layers around them.
 
-It provides a browser WebUI, CLI, Agent Lab, target configuration, scan execution, evidence capture, reports, audit logs, and validation workflows. Findings are assessment evidence for human review; VulnoraIQ does not claim certified VAPT-grade assurance. See [`docs/ASSESSMENT_ASSURANCE.md`](docs/ASSESSMENT_ASSURANCE.md).
+You point VulnoraIQ at a system you are authorised to assess — or import an agent
+and let it build one for you — and it runs bounded, authorised assessments,
+captures the evidence, and produces reports a human can review.
 
-For operator setup and usage, see [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md). For the maintained documentation index, see [`docs/README.md`](docs/README.md).
+Findings are **evidence for human review**. VulnoraIQ does not claim certified
+VAPT-grade assurance. See [assessment assurance](docs/security/assurance.md).
 
-## Product direction
+## What VulnoraIQ is
 
-VulnoraIQ has two explicit run modes.
+- A **browser console** for configuring targets, running assessments, and
+  triaging findings.
+- A **CLI** over the same engine, for scripted and CI use.
+- **Agent Lab**: import an AI-agent project, build and run it in a sandboxed
+  container, and get a working scan target without hand-writing a config.
+- **OWASP LLM Top 10 (2025)** and **MITRE ATLAS** mapped assessment modules.
+- Reports in Markdown, JSON, SARIF, and HTML dashboards, with redacted evidence
+  and an audit trail.
 
-| Mode | Best for | Where VulnoraIQ runs | Where imported AI agents run | Report location |
+It is **not** a general-purpose chatbot, a shell for a language model, or an
+unattended scanner. Every assessment requires explicit authorisation, and every
+target is scope-checked before a request is sent.
+
+## Key capabilities
+
+| Capability | Status |
+| --- | --- |
+| Desktop Mode (VulnoraIQ on your machine) | Supported |
+| Lab Mode (VulnoraIQ in Docker Compose) | Supported |
+| Target types: HTTP JSON, chat-completions, Ollama generate, RAG query, webhook JSON, agent tool-loop | Supported |
+| Agent Lab import → build → run → auto-target → scan | Supported, **experimental** — it builds and runs code you supply |
+| OWASP LLM Top 10 (2025) and MITRE ATLAS mapping | Supported |
+| Markdown / JSON / SARIF / HTML reporting | Supported |
+| Finding triage with history and audit trail | Supported |
+| SQLite (WAL) persistence for jobs, findings, and triage history | Supported |
+| In-app assistant ("Nora") for finding explanations | Optional; falls back to templated guidance when not installed |
+| GPU for imported agents and the assistant | Optional; VulnoraIQ passes GPU runtime flags, it does not install drivers |
+| Token auth, trusted-proxy identity, production hardening gate | Supported |
+| Direct OIDC / JWT identity | [Planned](docs/plans/oidc-jwt-auth.md), not implemented |
+| Signed native desktop installers | Not currently supported |
+
+## Two run modes
+
+| Mode | Best for | Where VulnoraIQ runs | Where agents run | Output |
 | --- | --- | --- | --- | --- |
-| **Desktop Mode** | Normal desktop/laptop users | Host machine | Docker containers | `./scan-reports/` |
-| **Advanced Docker Lab Mode** | Servers, VMs, CI, dev/test labs | Docker Compose container | Docker containers | Docker `/data` volume or mapped folders |
+| **Desktop Mode** | Laptops and workstations | Host process | Docker containers | `./scan-reports/` |
+| **Lab Mode** | Servers, VMs, CI, reproducible labs | Docker Compose container | Docker containers | `/data` volume or mapped folders |
 
-Desktop Mode and Docker Lab Mode use a **local single-user/admin WebUI session** by default. Production or shared internal-server deployments must explicitly enable token auth and provide an admin token.
+Both default to a **local single-user admin session** bound to `127.0.0.1`.
+Anything shared requires token auth and explicit hardening.
+
+## How it works
 
 ```text
-User clicks launcher
-  -> VulnoraIQ WebUI opens
-  -> User imports/selects an AI agent in Agent Lab
-  -> VulnoraIQ stores WebUI imports under agent-lab/projects/
-  -> User configures API key, local LLM, remote LLM, CPU/GPU runtime
-  -> Docker runs only the sandboxed imported agent/runtime
-  -> VulnoraIQ auto-creates a target
-  -> User runs authorised scans from the WebUI
-  -> Results are visible on the dashboard and saved under scan-reports/
+Import or configure a target
+  → validate scope and connectivity
+    → confirm authorisation
+      → run the selected assessment profile
+        → capture redacted evidence
+          → map findings to OWASP LLM / MITRE ATLAS
+            → report, triage, and review
 ```
 
-## Current status
+Agent Lab adds a step in front: import a project, detect its HTTP contract, build
+and run it in a container, health-gate it, and register the result as a target.
 
-| Area | Status |
-| --- | --- |
-| Version | `0.3.0` beta |
-| WebUI | React browser console served by `webui.assistant_server` / `vulnoraiq-web`. |
-| Desktop Mode | Primary launchers start VulnoraIQ on the host, create local `scan-reports/`, `agent-lab/`, and optional mapped `projects/` folders, and open a guarded local single-user/admin WebUI session. |
-| Advanced Docker Lab Mode | Full Docker Compose lab remains available through explicit Docker Lab launchers and manual Compose commands. |
-| Agent Lab | Experimental workflow at `/agent-lab` for importing real AI-agent projects through local folder upload, ZIP upload, Git import, or mapped folders; configuring provider/runtime settings; building/running agents in Docker; auto-creating targets; and launching scans. |
-| Persistence | SQLite job store, reports, evidence, audit logs, and Agent Lab metadata. |
-| Identity | `local_admin` mode for desktop/lab scope; production token auth and reverse-proxy identity are available for hardened internal deployments. Direct OIDC/JWT is future work. |
-| Documentation | Active docs now point to current guides/status/assurance docs. Completed or superseded planning docs are staged under `docs/ready-to-remove/` for maintainer review. |
-| CI | Normal PR/main checks are consolidated into `.github/workflows/ci.yml`. The duplicate `Python CI` workflow has been removed. |
+## Quick start
 
-## Prerequisites
-
-| Run path | Requirements |
-| --- | --- |
-| Desktop Mode from source/package | Docker Engine or Docker Desktop with Docker Compose v2, Python 3.10 or newer, internet access for first dependency/image builds, and a modern browser. |
-| Advanced Docker Lab / Docker GUI lab | Docker Engine or Docker Desktop with Docker Compose v2, internet access for first image/dependency builds, and a modern browser. |
-| Agent Lab GPU mode | Host GPU container support. Agent Lab passes Docker GPU runtime flags; it does not install host GPU drivers. |
-| Local Ollama / LM Studio | Provider running on the host. Agent containers reach host providers through `host.docker.internal` where supported/configured. |
-| Development tests | Python 3.10 or newer, Node.js 20 or newer, npm, Playwright browser dependencies, and a modern browser. |
-
-## Quick start: Desktop Mode
-
-Use this for normal laptop/workstation use.
+### Desktop Mode
 
 | Platform | Launcher |
 | --- | --- |
@@ -63,50 +78,12 @@ Use this for normal laptop/workstation use.
 | macOS | `launch-vulnoraiq-webui.command` |
 | Linux | `launch-vulnoraiq-webui.sh` |
 
-Desktop Mode performs the following steps:
+The launcher starts VulnoraIQ on the host, checks Docker is available for agent
+sandboxes, creates the local output folders, and opens
+<http://127.0.0.1:8787>. No `vulnoraiq-web` container is created — Docker is
+used only for agents.
 
-1. starts VulnoraIQ natively on the host;
-2. opens a guarded local single-user/admin WebUI session on `127.0.0.1` using `VULNORAIQ_AUTH_MODE=local_admin`;
-3. checks Docker is available for sandboxed Agent Lab runtimes;
-4. creates local output folders;
-5. starts the WebUI on `127.0.0.1:8787`;
-6. opens the browser.
-
-Desktop Mode **does not create a `vulnoraiq-web` Docker container**. Docker containers appear only when you import/deploy an AI agent or local test runtime. Use Docker Lab Mode when you intentionally want the VulnoraIQ WebUI itself to run inside Docker.
-
-Desktop Mode folder contract:
-
-```text
-scan-reports/
-  jobs.db
-  reports/
-  evidence/
-  audit/
-  exports/
-
-agent-lab/
-  projects/          # WebUI imports: local folder upload, ZIP upload, Git import
-  deployments.yaml
-
-projects/            # optional mapped AI-agent folders
-  <agent-name>/
-```
-
-After startup, open:
-
-```text
-http://127.0.0.1:8787
-```
-
-Agent Lab is available at:
-
-```text
-http://127.0.0.1:8787/agent-lab
-```
-
-## Quick start: Advanced Docker Lab Mode
-
-Use this for servers, VMs, CI, or fully containerised development/testing.
+### Lab Mode
 
 | Platform | Launcher |
 | --- | --- |
@@ -114,170 +91,131 @@ Use this for servers, VMs, CI, or fully containerised development/testing.
 | macOS | `launch-vulnoraiq-docker-lab.command` |
 | Linux | `launch-vulnoraiq-docker-lab.sh` |
 
-Manual equivalent:
+Or directly:
 
 ```bash
 docker compose build
 docker compose up -d
-docker compose ps
 ```
 
-Open:
+Then open <http://127.0.0.1:8787>.
 
-```text
-http://127.0.0.1:8787
-```
+Full walkthrough: [quick start](docs/getting-started/quick-start.md).
 
-Useful Docker Lab commands:
+## Installation
 
-```bash
-docker compose exec vulnoraiq-web vulnoraiq targets list
-docker compose exec vulnoraiq-web vulnoraiq reports list
-docker compose exec vulnoraiq-web vulnoraiq jobs list
-docker compose logs vulnoraiq-web
-```
-
-Stop Docker Lab Mode:
-
-```bash
-docker compose down
-```
-
-Only use this when you intentionally want to delete local Docker volumes, jobs, reports, evidence, audit logs, and Agent Lab imports:
-
-```bash
-docker compose down -v
-```
-
-## Agent Lab workflow
-
-Agent Lab is the WebUI flow for testing real AI agents.
-
-```text
-Import Agent
-  -> Configure LLM/API keys
-  -> Select CPU/GPU runtime
-  -> Build/Run sandboxed Docker container
-  -> Auto-create VulnoraIQ target
-  -> Run authorised scan
-  -> Review dashboard, evidence, and reports
-```
-
-Recommended import options:
-
-| Option | Typical use |
+| Path | Requirements |
 | --- | --- |
-| **Local folder upload** | Select an AI-agent source folder in the browser and import it into managed `agent-lab/projects/`. This is the preferred desktop flow. |
-| **ZIP upload** | Upload a prepared project archive. |
-| **Git URL** | Import from an approved Git host. |
-| **Mapped folder** | Place projects under `./projects/<agent-name>/` and refresh them as read-only mapped projects. |
+| Desktop Mode | Python 3.10+, Docker Engine or Docker Desktop with Compose v2, a modern browser |
+| Lab Mode | Docker Engine or Docker Desktop with Compose v2, a modern browser |
+| Development | The above plus Node.js 20+ and npm |
 
-Supported provider patterns include Ollama, LM Studio, OpenRouter, custom OpenAI-compatible endpoints, and custom environment variables.
-
-In Desktop Mode, VulnoraIQ scans sandboxed agents through published localhost endpoints. In Advanced Docker Lab Mode, VulnoraIQ can scan sandboxed agents through Docker container DNS.
-
-Agent Lab remains experimental because it builds and runs operator-provided code. Import and test only code and systems you own or are explicitly authorised to assess.
-
-## Configure a direct target
-
-You do not need Agent Lab to test an AI system you already run. In the **Targets** workspace, click **Add** and author a direct endpoint:
-
-| Field | Example |
-| --- | --- |
-| Target type | `http_json`, `chat_completions`, `ollama_generate`, `webhook_json`, `rag_query`, `agent_tool_loop` |
-| Base URL | `http://127.0.0.1:8000` (loopback/private host of the system under test) |
-| Endpoint path | `/v1/chat/completions` |
-| Model | `gpt-4o-mini` / `llama3` (chat/Ollama types) |
-| Response extraction path | `choices.0.message.content` |
-| Request body template | `{ "prompt": "{{prompt}}" }` (or `{}` to use the type default) |
-
-Use **Test connectivity** to validate, then **Start authorised scan**. External (non-loopback/non-private) hosts are blocked unless `allow_external` is explicitly enabled for a system you own or are authorised to assess. The CLI reads the same targets from `config/targets.yaml`.
-
-## Source/package local development
-
-Install from a source checkout:
+From a source checkout:
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-python -m pip install --upgrade pip
-pip install -e .[dev]
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
+pip install -e ".[dev]"
 ```
 
-Run Desktop Mode backend directly:
+Details: [installation](docs/getting-started/installation.md).
+
+## AI and model providers
+
+VulnoraIQ never calls a hosted model to perform an assessment. Models appear in
+two independent places:
+
+- **Imported agents** get a provider you choose at deploy time — Ollama, LM
+  Studio, OpenRouter, any OpenAI-compatible endpoint, or plain environment
+  variables. Keys are injected into that agent's container and redacted from
+  stored records.
+- **The optional assistant ("Nora")** runs a small local GGUF model in-process to
+  explain findings. It is advisory, grounded in the finding's own evidence, and
+  cannot reach a target or execute anything.
+
+Details: [model providers](docs/guides/model-providers.md).
+
+## Security and isolation
+
+- Every scan requires explicit authorisation; without it nothing is sent.
+- A target host must resolve to loopback, private, or link-local addresses unless
+  it is explicitly allowlisted or opted into external access.
+- Placeholder and synthetic fixture targets are refused in normal runtime.
+- Agent containers run with `--cap-drop ALL`, `--security-opt no-new-privileges`,
+  loopback-only port publishing, and optional CPU/memory limits.
+- External commands run as argument arrays through a single audited boundary —
+  never a shell string. A model has no path to command execution.
+- Console access is loopback single-admin by default; token mode is required for
+  anything shared, and production mode refuses to start without a real token.
+- There is no built-in or default credential anywhere in VulnoraIQ.
+
+Lab Mode mounts the Docker socket so Agent Lab can build and run containers. That
+is equivalent to root on the host and is the central trust decision in the
+design — read [sandboxing](docs/security/sandboxing.md) before exposing
+VulnoraIQ beyond your own machine.
+
+## Documentation
+
+[`docs/README.md`](docs/README.md) is the documentation map. Common entry points:
+
+| Need | Document |
+| --- | --- |
+| First assessment | [Quick start](docs/getting-started/quick-start.md) |
+| Configure what you assess | [Targets](docs/guides/targets.md) |
+| Import and run an agent | [Agents](docs/guides/agents.md) |
+| Understand results | [Findings and evidence](docs/guides/findings.md) |
+| Something is wrong | [Troubleshooting](docs/guides/troubleshooting.md) |
+| Trust boundaries | [Security model](docs/security/security-model.md) |
+| Every setting | [Configuration](docs/reference/configuration.md) · [Environment variables](docs/reference/environment-variables.md) |
+| API and CLI | [HTTP API](docs/reference/api.md) · [CLI](docs/reference/cli.md) |
+
+## Development
 
 ```bash
-python scripts/desktop_launch.py
-```
-
-Run Docker Lab backend directly:
-
-```bash
-python scripts/bootstrap_launch.py
-```
-
-Run only the WebUI server in guarded local single-user/admin mode:
-
-```bash
-VULNORAIQ_AUTH_MODE=local_admin vulnoraiq-web --host 127.0.0.1 --port 8787
-```
-
-`VULNORAIQ_AUTH_ENABLED=false` remains only as a backward-compatible alias for older launchers and Compose files. New code should use `VULNORAIQ_AUTH_MODE=local_admin`.
-
-## Security boundary
-
-VulnoraIQ is intended for authorised local or controlled internal use.
-
-- Keep local launchers bound to `127.0.0.1`.
-- Do not expose the WebUI on a shared network without production auth, TLS, reverse proxy controls, audit retention, and backups.
-- Store API keys outside the repository and pass them through approved environment/secret handling.
-- Treat reports and findings as evidence requiring human review.
-- Review imported Agent Lab source before running it.
-
-Production/internal-server mode requires explicit hardening. For a shared internal server, configure production auth, a trusted reverse proxy, TLS, audit retention, and backups before exposing the service.
-
-```bash
-export VULNORAIQ_ENV=production
-export VULNORAIQ_AUTH_MODE=token
-export VULNORAIQ_ADMIN_TOKEN=<strong-admin-token>
-export VULNORAIQ_JOB_STORE_BACKEND=sqlite
-export VULNORAIQ_JOB_STORE_PATH=/data/jobs.db
-export VULNORAIQ_WEB_OUTPUT_ROOT=/data/reports
-python scripts/validate_runtime_production_config.py
-vulnoraiq-web --host 127.0.0.1 --port 8787
-```
-
-Use trusted reverse-proxy identity only when the proxy authenticates users and strips spoofed identity headers. Direct OIDC/JWT remains future work and is not required for current local single-user use.
-
-## Validation
-
-Core validation commands:
-
-```bash
+pip install -e ".[dev]"
 ruff check .
 mypy .
 pytest -q
-python -m pip check
-pip-audit
+```
+
+Console:
+
+```bash
+cd webui/console
+npm ci
+npm run build        # typechecks, then builds into webui/static/console/
+```
+
+See [development setup](docs/development/development-setup.md).
+
+## Testing
+
+```bash
+pytest -q                                   # unit and integration suite
 python scripts/validate_package_metadata.py
 python scripts/validate_owasp_atlas_mappings.py
 python scripts/validate_genai_readiness.py
 python scripts/validate_aitg_full_coverage.py
-python scripts/validate_production_testing_readiness.py --output-dir reports/output/production-readiness
-python scripts/validate_runtime_production_config.py
+python scripts/validate_target_configs.py
+npm run test:webui:hosted                   # browser flow (needs Playwright)
 ```
 
-WebUI browser flow:
+See [testing](docs/development/testing.md).
 
-```bash
-cd webui/console
-npm install
-npm run typecheck
-npm run build
-cd ../..
-npm install
-npx playwright install chromium --with-deps
-npm run test:webui:hosted
-```
+## Responsible use
 
-Normal PR/main CI runs through `.github/workflows/ci.yml`. Release artifact builds, Python package publishing, and supply-chain image/SBOM workflows remain separate release/manual workflows so they do not duplicate the normal CI gate.
+VulnoraIQ sends adversarial input to AI systems and builds and runs code you
+import. **Use it only against systems you own or are explicitly authorised in
+writing to assess.** See [ACCEPTABLE_USE.md](ACCEPTABLE_USE.md) and
+[responsible use](docs/security/responsible-use.md).
+
+Report security issues through [SECURITY.md](SECURITY.md).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## License
+
+Apache-2.0. See [LICENSE](LICENSE), [NOTICE](NOTICE), and
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

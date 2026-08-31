@@ -2,34 +2,18 @@ from __future__ import annotations
 
 import logging
 import os
-import subprocess
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from webui.docker_cli import DockerCommandError, loopback_publish, run_docker
+
 LOGGER = logging.getLogger("vulnoraiq.webui.agent_host")
 CONFIG_ROOT = Path(os.getenv("VULNORAIQ_CONFIG_DIR", "config"))
 TEMPLATES_PATH = CONFIG_ROOT / "agent_templates.yaml"
 AGENT_LABEL = "vulnoraiq.agent"
-AGENT_NETWORK = "vulnoraiq_vulnoraiq-lab"
-DOCKER_TIMEOUT = int(os.getenv("VULNORAIQ_DOCKER_COMMAND_TIMEOUT", "600"))
-
-
-def _run_docker(args: list[str]) -> tuple[str, str]:
-    result = subprocess.run(
-        ["docker"] + args,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=DOCKER_TIMEOUT,
-    )
-    stdout = (result.stdout or "").strip()
-    stderr = (result.stderr or "").strip()
-    if result.returncode != 0:
-        raise RuntimeError(stderr or stdout or f"docker {' '.join(args)} failed")
-    return stdout, stderr
+AGENT_NETWORK = os.getenv("VULNORAIQ_AGENT_NETWORK", "vulnoraiq_vulnoraiq-lab")
 
 
 def _container_name(agent_id: str) -> str:
@@ -70,7 +54,7 @@ def delete_template(key: str) -> bool:
 class AgentHost:
     def list_agents(self) -> list[dict[str, Any]]:
         try:
-            out, _ = _run_docker(
+            out, _ = run_docker(
                 ["ps", "-a", "--filter", f"label={AGENT_LABEL}", "--format", "{{.ID}}\t{{.Label \"vulnoraiq.agent.id\"}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}"]
             )
             if not out:
@@ -87,7 +71,7 @@ class AgentHost:
                         "ports": parts[4] if len(parts) > 4 else "",
                     })
             return agents
-        except RuntimeError as exc:
+        except DockerCommandError as exc:
             LOGGER.warning("Failed to list agents: %s", exc)
             return []
 
@@ -117,27 +101,44 @@ class AgentHost:
                 ctx = build.get("context", ".")
                 df = build.get("dockerfile", "Dockerfile")
                 LOGGER.info("Building image %s from %s", image_name, ctx)
-                _run_docker(["build", "-t", image_name, "-f", df, ctx])
+                run_docker(["build", "-t", image_name, "-f", df, ctx])
         else:
             if not image:
                 raise ValueError("Either template_key or image must be provided")
             image_name = image
-            # Publish the agent's port to the host (host:container) so VulnoraIQ can
-            # reach it at 127.0.0.1:<port> and register it as a scannable target.
+            # Publish the agent's port so VulnoraIQ can reach it at
+            # 127.0.0.1:<port> and register it as a scannable target.
             ports = [f"{port}:{port}"] if port else []
 
-        cmd = ["run", "-d", "--name", name, "--label", f"{AGENT_LABEL}={agent_id}", "--label", f"vulnoraiq.agent.id={agent_id}", "--network", AGENT_NETWORK]
+        cmd = [
+            "run",
+            "-d",
+            "--name",
+            name,
+            "--label",
+            f"{AGENT_LABEL}={agent_id}",
+            "--label",
+            f"vulnoraiq.agent.id={agent_id}",
+            "--network",
+            AGENT_NETWORK,
+            # Assessment targets are untrusted by definition: drop every Linux
+            # capability and block privilege escalation inside the container.
+            "--security-opt",
+            "no-new-privileges:true",
+            "--cap-drop",
+            "ALL",
+        ]
         for p in ports:
-            cmd += ["-p", str(p)]
+            cmd += ["-p", loopback_publish(str(p))]
         if env:
             for k, v in env.items():
                 if v:
                     cmd += ["-e", f"{k}={v}"]
         cmd.append(image_name)
         try:
-            out, _ = _run_docker(cmd)
-        except RuntimeError as exc:
-            raise RuntimeError(f"Failed to deploy agent '{agent_id}': {exc}") from exc
+            out, _ = run_docker(cmd)
+        except DockerCommandError as exc:
+            raise DockerCommandError(f"Failed to deploy agent '{agent_id}': {exc}") from exc
 
         container_id = out.strip()
         return {"container_id": container_id, "agent_id": agent_id, "name": name, "image": image_name, "status": "deployed", "port": port}
@@ -146,14 +147,14 @@ class AgentHost:
         agent = self.get_agent(agent_id)
         if not agent:
             return False
-        _run_docker(["stop", agent["container_id"]])
+        run_docker(["stop", agent["container_id"]])
         return True
 
     def start(self, agent_id: str) -> bool:
         agent = self.get_agent(agent_id)
         if not agent:
             return False
-        _run_docker(["start", agent["container_id"]])
+        run_docker(["start", agent["container_id"]])
         return True
 
     def remove(self, agent_id: str) -> bool:
@@ -161,8 +162,8 @@ class AgentHost:
         if not agent:
             return False
         try:
-            _run_docker(["rm", "-f", agent["container_id"]])
-        except RuntimeError:
+            run_docker(["rm", "-f", agent["container_id"]])
+        except DockerCommandError:
             pass
         return True
 
@@ -170,15 +171,15 @@ class AgentHost:
         agent = self.get_agent(agent_id)
         if not agent:
             return ""
-        out, _ = _run_docker(["logs", "--tail", str(tail), agent["container_id"]])
+        out, _ = run_docker(["logs", "--tail", str(tail), agent["container_id"]])
         return out
 
     def ensure_network(self) -> None:
         try:
-            _run_docker(["network", "inspect", AGENT_NETWORK])
-        except RuntimeError:
+            run_docker(["network", "inspect", AGENT_NETWORK])
+        except DockerCommandError:
             LOGGER.info("Creating network %s", AGENT_NETWORK)
-            _run_docker(["network", "create", AGENT_NETWORK])
+            run_docker(["network", "create", AGENT_NETWORK])
 
 
 _HOST = AgentHost()

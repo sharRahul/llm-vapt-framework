@@ -30,7 +30,6 @@ def _prepare_desktop_environment() -> dict[str, str]:
         scan_root,
         scan_root / "reports",
         scan_root / "evidence",
-        scan_root / "audit",
         scan_root / "exports",
         agent_root,
         agent_root / "projects",
@@ -51,7 +50,6 @@ def _prepare_desktop_environment() -> dict[str, str]:
     _set_default_env(env, "VULNORAIQ_WEB_OUTPUT_ROOT", scan_root / "reports")
     _set_default_env(env, "VULNORAIQ_RUNTIME_TARGETS_PATH", scan_root / "reports" / "runtime_targets.yaml")
     _set_default_env(env, "VULNORAIQ_EVIDENCE_DIR", scan_root / "evidence")
-    _set_default_env(env, "VULNORAIQ_AUDIT_DIR", scan_root / "audit")
     _set_default_env(env, "VULNORAIQ_AGENT_LAB_ROOT", agent_root)
     _set_default_env(env, "VULNORAIQ_AGENT_LAB_PROJECTS_ROOT", agent_root / "projects")
     _set_default_env(env, "VULNORAIQ_AGENT_LAB_DEPLOYMENTS", agent_root / "deployments.yaml")
@@ -115,7 +113,7 @@ def main() -> None:
     _ensure_docker_network(env["VULNORAIQ_AGENT_NETWORK"])
 
     process = subprocess.Popen(
-        [sys.executable, "-m", "webui.assistant_server", "--host", "127.0.0.1", "--port", "8787"],
+        [sys.executable, "-m", "webui.server", "--host", "127.0.0.1", "--port", "8787"],
         cwd=ROOT,
         env=env,
     )

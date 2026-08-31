@@ -13,6 +13,7 @@ import { IntelligencePanel } from "@/components/intelligence/IntelligencePanel";
 import { AgentHost } from "@/components/agents/AgentHost";
 import { ProjectImporter } from "@/components/projects/ProjectImporter";
 import { TargetsManager } from "@/components/targets/TargetsManager";
+import { apiGet, apiPatch, apiPost } from "@/lib/api";
 import { useTheme } from "@/hooks/useTheme";
 import { emptyDashboardMetrics, emptySeverityDistribution, emptyTrendData } from "@/data/cleanState";
 import type { Asset, BackendFinding, Finding, FindingHistoryEntry, FindingMutationState, FindingStatus, ScanEvent, ScanJob, Severity, SeverityDistributionPoint, TargetConfig } from "@/types";
@@ -27,16 +28,6 @@ const CONSOLE_VIEWS: ConsoleView[] = ["overview", "workspace", "targets", "agent
 function viewFromHash(): ConsoleView | null {
   const raw = window.location.hash.replace(/^#\/?/, "");
   return (CONSOLE_VIEWS as string[]).includes(raw) ? (raw as ConsoleView) : null;
-}
-
-async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, { credentials: "same-origin", ...options });
-  if (!response.ok) throw new Error(await response.text());
-  return response.json() as Promise<T>;
-}
-
-async function csrfToken(): Promise<string> {
-  return (await api<{ csrf_token: string }>("/api/csrf-token")).csrf_token;
 }
 
 function normaliseSeverity(value: unknown): Severity {
@@ -122,6 +113,8 @@ function scanAsset(scan: ScanJob, findings: Finding[]): Asset {
     riskScore: findings.reduce((max, finding) => Math.max(max, finding.riskScore), 0),
     lastScanned: scan.completed_at || scan.started_at || scan.created_at || new Date().toISOString(),
     findingIds: findings.map((finding) => finding.id),
+    scanStatus: scan.status,
+    scanError: scan.error ?? null,
   };
 }
 
@@ -191,7 +184,7 @@ function ConsoleInner() {
 
   async function loadTargets() {
     try {
-      const data = await api<{ targets: Record<string, TargetConfig> }>("/api/targets");
+      const data = await apiGet<{ targets: Record<string, TargetConfig> }>("/api/targets");
       const ids = Object.keys(data.targets || {});
       setConfiguredTargetIds(ids);
       setConfiguredTargets(ids.map((id) => ({ id, label: data.targets[id]?.name || id })));
@@ -202,13 +195,13 @@ function ConsoleInner() {
   }
 
   async function refreshFindingHistory(scanId: string, findingId: string): Promise<void> {
-    const data = await api<{ history: FindingHistoryEntry[] }>(`/api/scans/${encodeURIComponent(scanId)}/findings/${encodeURIComponent(findingId)}/history`);
+    const data = await apiGet<{ history: FindingHistoryEntry[] }>(`/api/scans/${encodeURIComponent(scanId)}/findings/${encodeURIComponent(findingId)}/history`);
     setFindingHistories((prev) => ({ ...prev, [findingId]: data.history || [] }));
   }
 
   async function refreshScanFindings(scanId: string, scan?: ScanJob | null, preferredFindingId?: string, switchToWorkspace = true): Promise<void> {
-    const findingsPayload = await api<{ findings: BackendFinding[] }>(`/api/scans/${encodeURIComponent(scanId)}/findings`);
-    const scanRecord = scan || activeScan || (await api<ScanJob>(`/api/scans/${encodeURIComponent(scanId)}`));
+    const findingsPayload = await apiGet<{ findings: BackendFinding[] }>(`/api/scans/${encodeURIComponent(scanId)}/findings`);
+    const scanRecord = scan || activeScan || (await apiGet<ScanJob>(`/api/scans/${encodeURIComponent(scanId)}`));
     const nextFindings = (findingsPayload.findings || []).map((finding, index) => toFinding(finding, scanId, index));
     setActiveScan(scanRecord);
     setRuntimeFindings(nextFindings);
@@ -226,7 +219,7 @@ function ConsoleInner() {
   async function loadExistingScanState(): Promise<void> {
     setDashboardLoading(true);
     try {
-      const data = await api<{ jobs: ScanJob[] }>("/api/scans");
+      const data = await apiGet<{ jobs: ScanJob[] }>("/api/scans");
       const scan = latestScan(data.jobs || []);
       if (scan) await refreshScanFindings(scan.id, scan, undefined, false);
       else {
@@ -266,8 +259,15 @@ function ConsoleInner() {
         setDashboardLoading(false);
         source.close();
         scanSourceRef.current = null;
-        if (payload.type === "scan_completed") void refreshScanFindings(scan.id, { ...scan, status: "completed" });
-        else notify("Scan failed — check backend logs and scan artifacts", "error");
+        if (payload.type === "scan_completed") {
+          void refreshScanFindings(scan.id, { ...scan, status: "completed" });
+        } else {
+          // The backend reports why a scan was rejected; show that, not a generic message.
+          const reason = payload.message || "Scan failed";
+          setActiveScan({ ...scan, status: "failed", error: reason });
+          setScanPhase("Scan failed");
+          notify(reason, "error");
+        }
       }
     };
     SCAN_EVENT_TYPES.forEach((type) => source.addEventListener(type, onEvent));
@@ -288,8 +288,7 @@ function ConsoleInner() {
     try {
       if (!targetId) { notify("No targets configured. Add a target in the Targets view before running a scan.", "error"); setScanning(false); setDashboardLoading(false); return; }
       if (explicitTarget) setScanTargetId(explicitTarget);
-      const token = await csrfToken();
-      const job = await api<ScanJob>("/api/scans", { method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": token }, body: JSON.stringify({ target: targetId, profile: "baseline", authorised: true }) });
+      const job = await apiPost<ScanJob>("/api/scans", { target: targetId, profile: "baseline", authorised: true });
       setActiveScan(job);
       notify(`Scan ${job.id} queued — streaming live backend progress`, "info");
       connectScanEvents(job);
@@ -307,8 +306,7 @@ function ConsoleInner() {
       return;
     }
     try {
-      const token = await csrfToken();
-      await api(`/api/scans/${encodeURIComponent(activeScan.id)}/findings/${encodeURIComponent(finding.id)}`, { method: "PATCH", headers: { "Content-Type": "application/json", "X-CSRF-Token": token }, body: JSON.stringify(patch) });
+      await apiPatch(`/api/scans/${encodeURIComponent(activeScan.id)}/findings/${encodeURIComponent(finding.id)}`, patch);
       await refreshScanFindings(activeScan.id, activeScan, finding.id);
       await refreshFindingHistory(activeScan.id, finding.id);
       notify(`Finding ${finding.id} updated and persisted`);
@@ -333,7 +331,7 @@ function ConsoleInner() {
   };
 
   const navPane = <AssetNavigationPane assets={displayAssets} findingsById={findingsById} selectedFindingId={selectedFindingId} onSelectFinding={handleSelectFinding} />;
-  const middlePane = selectedFinding ? <AnalysisWorkspace finding={selectedFinding} asset={selectedAsset} history={selectedFindingHistory} onMarkForReview={() => handleMarkForReview(selectedFinding)} /> : <EmptyState icon={MousePointerSquareDashed} title="No scan finding selected" description="Run a scan or open a saved scan result. Clean workspaces show no sample findings or dummy assets." />;
+  const middlePane = selectedFinding ? <AnalysisWorkspace finding={selectedFinding} asset={selectedAsset} history={selectedFindingHistory} onMarkForReview={() => handleMarkForReview(selectedFinding)} onChangeStatus={(patch) => void persistFindingState(selectedFinding, patch)} /> : <EmptyState icon={MousePointerSquareDashed} title="No scan finding selected" description="Run a scan or open a saved scan result. Clean workspaces show no sample findings or dummy assets." />;
   const intelPane = selectedFinding ? <IntelligencePanel finding={selectedFinding} /> : <EmptyState icon={ScanSearch} title="No finding selected" description="Vulnerability intelligence and the Ask VulnoraIQ assistant appear here after a real backend finding is selected." />;
 
   return (

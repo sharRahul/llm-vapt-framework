@@ -3,49 +3,100 @@ from __future__ import annotations
 import pytest
 
 from core.scanner import Scanner
-from integrations.adapters import ChatCompletionsTargetClient, OllamaGenerateTargetClient, WebhookJsonTargetClient
+from integrations.target_adapters import invoke_target, normalize_target_config
 
 
 class FakeResponse:
-    def __init__(self, payload):
+    def __init__(self, payload, status_code: int = 200) -> None:
         self.payload = payload
+        self.status_code = status_code
         self.headers = {"content-type": "application/json"}
 
-    def raise_for_status(self) -> None:
-        return None
+    @property
+    def text(self) -> str:
+        import json
+
+        return json.dumps(self.payload)
 
     def json(self):
         return self.payload
 
 
-def test_chat_completions_adapter_normalises_response(monkeypatch) -> None:
-    def fake_post(*args, **kwargs):
-        return FakeResponse({"choices": [{"message": {"content": "hello"}}]})
+def _invoke(monkeypatch, config: dict, payload: dict) -> str:
+    captured: dict = {}
 
-    monkeypatch.setattr("integrations.adapters.requests.post", fake_post)
-    client = ChatCompletionsTargetClient(name="local", endpoint="http://localhost/chat", model="demo")
+    def fake_request(method, url, **kwargs):
+        captured["method"] = method
+        captured["url"] = url
+        captured["json"] = kwargs.get("json")
+        captured["params"] = kwargs.get("params")
+        return FakeResponse(payload)
 
-    assert client.invoke("test") == "hello"
-
-
-def test_ollama_adapter_normalises_response(monkeypatch) -> None:
-    def fake_post(*args, **kwargs):
-        return FakeResponse({"response": "ollama output"})
-
-    monkeypatch.setattr("integrations.adapters.requests.post", fake_post)
-    client = OllamaGenerateTargetClient(name="local", endpoint="http://localhost/api/generate", model="demo")
-
-    assert client.invoke("test") == "ollama output"
+    monkeypatch.setattr("integrations.target_adapters.requests.request", fake_request)
+    result = invoke_target("t", normalize_target_config("t", config), "test")
+    assert result.ok, result.error
+    _invoke.captured = captured  # type: ignore[attr-defined]
+    return result.answer
 
 
-def test_webhook_adapter_normalises_response(monkeypatch) -> None:
-    def fake_post(*args, **kwargs):
-        return FakeResponse({"output": "webhook output"})
+def test_chat_completions_target_normalises_response(monkeypatch) -> None:
+    answer = _invoke(
+        monkeypatch,
+        {"type": "chat_completions", "base_url": "http://127.0.0.1", "endpoint_path": "/chat", "model": "demo"},
+        {"choices": [{"message": {"content": "hello"}}]},
+    )
+    assert answer == "hello"
 
-    monkeypatch.setattr("integrations.adapters.requests.post", fake_post)
-    client = WebhookJsonTargetClient(name="hook", endpoint="http://localhost/hook")
 
-    assert client.invoke("test") == "webhook output"
+def test_ollama_target_normalises_response(monkeypatch) -> None:
+    answer = _invoke(
+        monkeypatch,
+        {"type": "ollama_generate", "base_url": "http://127.0.0.1", "endpoint_path": "/api/generate", "model": "demo"},
+        {"response": "ollama output"},
+    )
+    assert answer == "ollama output"
+
+
+def test_webhook_target_returns_whole_body_without_extraction_path(monkeypatch) -> None:
+    answer = _invoke(
+        monkeypatch,
+        {"type": "webhook_json", "base_url": "http://127.0.0.1", "endpoint_path": "/hook"},
+        {"output": "webhook output"},
+    )
+    assert "webhook output" in answer
+
+
+def test_http_json_target_uses_configured_extraction_path(monkeypatch) -> None:
+    answer = _invoke(
+        monkeypatch,
+        {
+            "type": "http_json",
+            "base_url": "http://127.0.0.1",
+            "endpoint_path": "/ask",
+            "request_body_template": {"msg": "{{prompt}}"},
+            "response_extraction_path": "data.reply",
+        },
+        {"data": {"reply": "extracted"}},
+    )
+    assert answer == "extracted"
+
+
+def test_get_target_sends_prompt_as_query_parameters(monkeypatch) -> None:
+    _invoke(
+        monkeypatch,
+        {
+            "type": "http_json",
+            "base_url": "http://127.0.0.1",
+            "endpoint_path": "/get",
+            "method": "GET",
+            "request_body_template": {"msg": "{{prompt}}"},
+        },
+        {"reply": "ok"},
+    )
+    captured = _invoke.captured  # type: ignore[attr-defined]
+    assert captured["method"] == "GET"
+    assert captured["params"] == {"msg": "test"}
+    assert captured["json"] is None
 
 
 def test_placeholder_target_rejected_even_when_authorised() -> None:

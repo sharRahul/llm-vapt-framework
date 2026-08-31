@@ -1,4 +1,3 @@
-# mypy: ignore-errors
 from __future__ import annotations
 
 import json
@@ -56,26 +55,21 @@ def test_real_environment_config_requires_authorisation_and_redacts_secret() -> 
 
 def test_react_console_uses_backend_scan_and_finding_apis() -> None:
     app = Path("webui/console/src/App.tsx").read_text(encoding="utf-8")
-    backlog = Path("docs/PRODUCTION_HARDENING_BACKLOG.md").read_text(encoding="utf-8")
 
     assert "TODO(api): wire to POST /api/scans" not in app
     assert "TODO(api): PATCH /api/findings" not in app
     assert "setAppliedFindingIds" not in app
     assert "window.setTimeout" not in app
 
-    assert 'api<ScanJob>("/api/scans"' in app
+    assert 'apiPost<ScanJob>("/api/scans"' in app
     assert "new EventSource" in app
     assert "/api/scans/${encodeURIComponent(scan.id)}/events" in app
-    assert 'method: "PATCH"' in app
+    assert "apiPatch(" in app
     assert "/findings/${encodeURIComponent(finding.id)}" in app
     assert "/history" in app
     assert "refreshScanFindings" in app
     assert "refreshFindingHistory" in app
 
-    current_backlog = backlog.split("## Current maturity backlog", 1)[1].split("## Production claim rule", 1)[0]
-    assert "WebUI live progress" not in current_backlog
-    assert "WebUI finding actions" not in current_backlog
-    assert "High-priority items completed on 2026-06-24" in backlog
 
 
 def test_assistant_backend_and_react_panel_are_live_wired() -> None:

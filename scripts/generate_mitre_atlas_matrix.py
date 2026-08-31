@@ -9,7 +9,7 @@ from urllib.request import urlopen
 import yaml
 
 DEFAULT_SOURCE_URL = "https://raw.githubusercontent.com/mitre-atlas/atlas-data/main/dist/v6/ATLAS-2026.05.yaml"
-DEFAULT_OUTPUT = Path("docs/MITRE_ATLAS_AI_MATRIX.md")
+DEFAULT_OUTPUT = Path("docs/reference/mitre-atlas-matrix.md")
 UNMAPPED_LABEL = "Unmapped / map later"
 
 OWASP_HINTS = {

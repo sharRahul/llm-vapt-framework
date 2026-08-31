@@ -35,12 +35,9 @@ _VALID_AUTH_MODES = {_AUTH_MODE_LOCAL_ADMIN, _AUTH_MODE_TOKEN, _AUTH_MODE_TRUSTE
 
 _DEFAULT_PERMISSIONS: dict[str, set[str]] = {
     "viewer": {"view_scans", "download_artifacts", "view_own_scans", "download_own_artifacts"},
-    "analyst": {
-        "view_scans",
-        "download_artifacts",
-        "view_own_scans",
-        "download_own_artifacts",
-    },
+    # analyst currently carries the same capabilities as viewer; it exists as a
+    # separate configurable identity, not as an extra permission level.
+    "analyst": {"view_scans", "download_artifacts", "view_own_scans", "download_own_artifacts"},
     "admin": {
         "view_scans",
         "download_artifacts",
@@ -52,8 +49,6 @@ _DEFAULT_PERMISSIONS: dict[str, set[str]] = {
         "manage_runtime",
     },
 }
-
-_INTERNAL_ADMIN_TOKEN = "vulnoraiq-internal-admin-token"
 
 _MIN_TOKEN_LENGTH = 20
 
@@ -107,7 +102,7 @@ class WebAuthManager:
 
         return _AUTH_MODE_TOKEN
 
-    def _validate_production(self) -> None:
+    def validate_production(self) -> None:
         if not self.is_production():
             return
         if self.auth_mode() == _AUTH_MODE_LOCAL_ADMIN:
@@ -202,13 +197,7 @@ class WebAuthManager:
         return AuthPrincipal("local-admin", "admin", _DEFAULT_PERMISSIONS["admin"], authenticated=False)
 
     def anonymous(self) -> AuthPrincipal:
-        fixture_admin = (
-            not self.is_production()
-            and _env_true("VULNORAIQ_ALLOW_TEST_FIXTURE_TARGETS")
-            and _env_true("VULNORAIQ_WEBUI_TEST_ADMIN")
-        )
-        if fixture_admin:
-            return AuthPrincipal("webui-test", "admin", _DEFAULT_PERMISSIONS["admin"], authenticated=False)
+        """The unauthenticated identity recorded against rejected requests."""
         return AuthPrincipal("anonymous", "viewer", _DEFAULT_PERMISSIONS["viewer"], authenticated=False)
 
     def authenticate_token(self, token: str | None) -> AuthPrincipal | None:
@@ -217,9 +206,6 @@ class WebAuthManager:
 
         if not token:
             return None
-
-        if not self.is_production() and token == _INTERNAL_ADMIN_TOKEN:
-            return AuthPrincipal("internal", "admin", _DEFAULT_PERMISSIONS["admin"], authenticated=True)
 
         env_tokens = self._load_env_tokens()
         if env_tokens:
@@ -257,19 +243,6 @@ class WebAuthManager:
                 raw_role = "viewer"
         role = _DEFAULT_ROLE_MAPPING.get(raw_role, "viewer")
         return AuthPrincipal(f"proxy:{username}", role, _DEFAULT_PERMISSIONS.get(role, _DEFAULT_PERMISSIONS["viewer"]), True)
-
-    def authenticate_proxy_headers(self, headers: dict[str, str]) -> AuthPrincipal | None:
-        if self.auth_mode() != _AUTH_MODE_TRUSTED_PROXY:
-            return None
-        principal = self.authenticate_proxy_identity(headers, trusted=True)
-        if principal is None:
-            return None
-        return AuthPrincipal(
-            principal.username.removeprefix("proxy:"),
-            principal.role,
-            principal.permissions,
-            principal.authenticated,
-        )
 
     def permissions_for_role(self, role: str) -> set[str]:
         return set(_DEFAULT_PERMISSIONS.get(role, set()))

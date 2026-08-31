@@ -33,6 +33,10 @@ export interface Asset {
   riskScore: number;
   lastScanned: string; // ISO timestamp
   findingIds: string[];
+  /** Backend job status. A failed scan must never read as a clean result. */
+  scanStatus?: ScanJobStatus | string;
+  /** Operator-facing reason a scan failed, when there is one. */
+  scanError?: string | null;
 }
 
 export interface CodeBlock {

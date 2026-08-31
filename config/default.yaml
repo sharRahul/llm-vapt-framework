@@ -65,7 +65,7 @@ mitre_atlas:
   refresh_config_path: config/atlas_refresh.yaml
   source_url: https://raw.githubusercontent.com/mitre-atlas/atlas-data/main/dist/v6/ATLAS-2026.05.yaml
   source_fixture_path: config/mitre_atlas_source_fixture.yaml
-  matrix_doc_path: docs/MITRE_ATLAS_AI_MATRIX.md
+  matrix_doc_path: docs/reference/mitre-atlas-matrix.md
 
 benchmarks:
   manifest_path: benchmarks/benchmark_suite.yaml

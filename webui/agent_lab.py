@@ -1,4 +1,3 @@
-# mypy: ignore-errors
 from __future__ import annotations
 
 import base64
@@ -19,7 +18,20 @@ from urllib.parse import urlparse
 
 import yaml
 
-from webui.agent_host import _run_docker
+from core import runtime_targets
+from webui.agent_analysis import (
+    ENV_KEY_RE,
+    detect_endpoints,
+    detect_env_vars,
+    detect_framework,
+    detect_ports,
+    read_readme,
+    read_representative_text,
+    resolve_endpoint_contract,
+    select_inference_endpoint,
+)
+from webui.docker_cli import DockerCommandError, run_docker
+from webui.payload import dict_field
 
 DEFAULT_AGENT_NETWORK = os.getenv("VULNORAIQ_AGENT_NETWORK", "vulnoraiq_vulnoraiq-lab")
 AGENT_LAB_ROOT = Path(os.getenv("VULNORAIQ_AGENT_LAB_ROOT", "/data/agent_lab"))
@@ -35,69 +47,7 @@ ALLOWED_GIT_HOSTS = {
 }
 
 PROJECT_ID_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_.-]{1,80}$")
-ENV_KEY_RE = re.compile(r"^[A-Z_][A-Z0-9_]{1,120}$")
-ENDPOINT_RE = re.compile(r"^/[A-Za-z0-9_./{}:-]*$")
-SECRET_RE = re.compile(r"(api[_-]?key|token|secret|password|bearer|credential)", re.I)
 
-PY_FRAMEWORK_PATTERNS = {
-    "fastapi": ["FastAPI(", "from fastapi", "import fastapi"],
-    "flask": ["Flask(", "from flask", "import flask"],
-    "django": ["django", "DJANGO_SETTINGS_MODULE"],
-    "gradio": ["gradio", ".launch("],
-    "streamlit": ["streamlit"],
-    "aiohttp": ["aiohttp"],
-}
-NODE_FRAMEWORK_PATTERNS = {
-    "express": ["express(", "from 'express'", 'from "express"', "require('express')", 'require("express")'],
-    "nextjs": ["next", "next.config"],
-}
-HTTP_ROUTE_PATTERNS = [
-    re.compile(r"@app\.(get|post|put|patch)\(['\"]([^'\"]+)['\"]"),
-    re.compile(r"@router\.(get|post|put|patch)\(['\"]([^'\"]+)['\"]"),
-    re.compile(r"app\.route\(['\"]([^'\"]+)['\"](?:,\s*methods=\[([^\]]+)\])?"),
-    re.compile(r"app\.(get|post|put|patch)\(['\"]([^'\"]+)['\"]"),
-]
-PORT_PATTERNS = [
-    re.compile(r"port\s*=\s*int\(os\.getenv\(['\"][A-Z0-9_]*PORT['\"],\s*['\"]?(\d{2,5})"),
-    re.compile(r"PORT\s*=\s*(\d{2,5})"),
-    re.compile(r"listen\((\d{2,5})"),
-    re.compile(r"uvicorn\s+[^\n]*--port\s+(\d{2,5})"),
-    # Bare port kwarg on a server-start call, e.g. Flask ``app.run('0.0.0.0',
-    # port=5000)`` or ``uvicorn.run(app, port=8000)`` — the run= prefix keeps
-    # this from matching unrelated ``port=`` assignments.
-    re.compile(r"\.run\([^)]*?\bport\s*=\s*(\d{2,5})"),
-]
-ENV_PATTERNS = [
-    re.compile(r"os\.getenv\(['\"]([A-Z][A-Z0-9_]{1,120})['\"](?:,\s*['\"]([^'\"]*)['\"])?"),
-    re.compile(r"os\.environ\[['\"]([A-Z][A-Z0-9_]{1,120})['\"]\]"),
-    re.compile(r"process\.env\.([A-Z][A-Z0-9_]{1,120})"),
-]
-
-# Ordered by preference: the first candidate found in a handler is treated as
-# the user-supplied inference parameter (AIRA uses ``msg``; most chat agents use
-# ``prompt``/``input``/``query``).
-PARAM_KEY_CANDIDATES = ["msg", "message", "prompt", "input", "query", "question", "text", "q"]
-USER_PARAM_KEYS = {"msg", "message", "prompt", "input", "query", "question", "text"}
-# Path tokens that indicate an inference/chat endpoint worth scanning.
-INFERENCE_PATH_TOKENS = {
-    "chat", "ask", "get", "query", "predict", "invoke", "completion", "completions",
-    "complete", "message", "messages", "msg", "run", "api", "generate", "respond",
-    "prompt", "inference", "infer", "v1", "answer", "conversation",
-}
-# Routes that are never the inference endpoint.
-NON_INFERENCE_PATHS = {
-    "/", "/health", "/healthz", "/healthcheck", "/ready", "/readyz", "/live",
-    "/liveness", "/readiness", "/refresh", "/favicon.ico", "/docs", "/redoc",
-    "/openapi.json", "/metrics", "/status", "/ping", "/version", "/robots.txt",
-}
-NON_INFERENCE_PREFIXES = ("/static", "/assets", "/_", "/.well-known", "/public")
-JSON_RESPONSE_SIGNALS = ("jsonify(", "JSONResponse", "JsonResponse", "return json.", "make_response(jsonify")
-TEXT_RESPONSE_SIGNALS = ("PlainTextResponse", "return str(", "content_type='text", 'content_type="text', "text/plain")
-RESPONSE_KEY_PATTERNS = [
-    re.compile(r"jsonify\(\s*\{\s*['\"](\w+)['\"]"),
-    re.compile(r"JSONResponse\(\s*(?:content=)?\{\s*['\"](\w+)['\"]"),
-    re.compile(r"return\s+\{\s*['\"](\w+)['\"]"),
-]
 DEPLOYMENT_MODES = {"container", "external", "hybrid"}
 HEALTH_CHECK_TIMEOUT = int(os.getenv("VULNORAIQ_AGENT_LAB_HEALTH_TIMEOUT", "30"))
 
@@ -165,7 +115,20 @@ def _safe_child(root: Path, *parts: str) -> Path:
 
 
 def _run_command(cmd: list[str], cwd: Path | None = None, timeout: int = 240) -> tuple[str, str]:
-    proc = subprocess.run(cmd, cwd=str(cwd) if cwd else None, text=True, capture_output=True, timeout=timeout, check=False)
+    """Run an external tool as an argument array, bounded by a timeout.
+
+    No shell is involved, so project ids and URLs cannot inject commands. A
+    timeout is reported as a normal failure rather than escaping as an
+    unhandled ``TimeoutExpired``.
+    """
+    try:
+        proc = subprocess.run(
+            cmd, cwd=str(cwd) if cwd else None, text=True, capture_output=True, timeout=timeout, check=False
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"required tool '{cmd[0]}' is not installed or not on PATH") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"'{cmd[0]}' timed out after {timeout}s") from exc
     if proc.returncode != 0:
         raise RuntimeError((proc.stderr or proc.stdout or f"command failed: {' '.join(cmd)}").strip())
     return proc.stdout.strip(), proc.stderr.strip()
@@ -317,12 +280,12 @@ def list_agent_projects() -> list[dict[str, Any]]:
 def analyze_agent_project(project_id: str) -> dict[str, Any]:
     path, source, writable = _project_path(project_id)
     files, total = _project_size(path)
-    text = _read_representative_text(path)
-    framework = _detect_framework(path, text)
-    ports = _detect_ports(path, text)
-    endpoints = _detect_endpoints(text)
-    env_vars = _detect_env_vars(text)
-    readme = _read_readme(path)
+    text = read_representative_text(path)
+    framework = detect_framework(path, text)
+    ports = detect_ports(path, text)
+    endpoints = detect_endpoints(text)
+    env_vars = detect_env_vars(text)
+    readme = read_readme(path)
     return {
         "id": path.name,
         "name": path.name,
@@ -346,216 +309,6 @@ def analyze_agent_project(project_id: str) -> dict[str, Any]:
         "size_bytes": total,
         "errors": [],
     }
-
-
-def _read_representative_text(path: Path, limit: int = 750_000) -> str:
-    chunks: list[str] = []
-    total = 0
-    suffixes = {".py", ".js", ".ts", ".tsx", ".mjs", ".cjs", ".json", ".toml", ".yaml", ".yml", ".md"}
-    for item in sorted(path.rglob("*")):
-        if not item.is_file() or item.suffix.lower() not in suffixes:
-            continue
-        if any(part in {"node_modules", ".venv", "venv", "dist", "build", "__pycache__"} for part in item.parts):
-            continue
-        try:
-            data = item.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            continue
-        chunks.append(f"\n# FILE: {item.relative_to(path)}\n{data[:50_000]}")
-        total += len(chunks[-1])
-        if total >= limit:
-            break
-    return "\n".join(chunks)
-
-
-def _detect_framework(path: Path, text: str) -> str | None:
-    lowered = text.lower()
-    for framework, markers in PY_FRAMEWORK_PATTERNS.items():
-        if any(marker.lower() in lowered for marker in markers):
-            return framework
-    for framework, markers in NODE_FRAMEWORK_PATTERNS.items():
-        if any(marker.lower() in lowered for marker in markers):
-            return framework
-    if (path / "requirements.txt").exists() or (path / "pyproject.toml").exists():
-        return "python"
-    if (path / "package.json").exists():
-        return "node"
-    return None
-
-
-def _detect_ports(path: Path, text: str) -> list[int]:
-    found: set[int] = set()
-    for pattern in PORT_PATTERNS:
-        for match in pattern.finditer(text):
-            try:
-                port = int(match.group(1))
-            except (TypeError, ValueError):
-                continue
-            if 1 <= port <= 65535:
-                found.add(port)
-    for env_file in (path / ".env", path / ".env.example"):
-        if not env_file.exists():
-            continue
-        for match in re.finditer(r"PORT\s*=\s*(\d{2,5})", env_file.read_text(encoding="utf-8", errors="ignore")):
-            found.add(int(match.group(1)))
-    # The Dockerfile is not part of the representative source text, but its
-    # EXPOSE directives are the authoritative container ports (AIRA declares
-    # EXPOSE 5000 while its Flask app.run also binds 5000).
-    dockerfile = path / "Dockerfile"
-    if dockerfile.exists():
-        for match in re.finditer(r"(?im)^\s*EXPOSE\s+(.+)$", dockerfile.read_text(encoding="utf-8", errors="ignore")):
-            for tok in re.findall(r"(\d{2,5})", match.group(1)):
-                port = int(tok)
-                if 1 <= port <= 65535:
-                    found.add(port)
-    return sorted(found)
-
-
-def _detect_endpoints(text: str) -> list[dict[str, Any]]:
-    endpoints: list[dict[str, Any]] = []
-    seen: set[tuple[str, str]] = set()
-    for pattern in HTTP_ROUTE_PATTERNS:
-        for match in pattern.finditer(text):
-            groups = match.groups()
-            if len(groups) >= 2 and groups[0] and groups[0].lower() in {"get", "post", "put", "patch"}:
-                method = groups[0].upper()
-                path = groups[1]
-            else:
-                path = groups[0]
-                methods = (groups[1] or "") if len(groups) > 1 else ""
-                method = "POST" if "POST" in methods.upper() else "GET"
-            if not path.startswith("/") or not ENDPOINT_RE.match(path):
-                continue
-            key = (method, path)
-            if key in seen:
-                continue
-            seen.add(key)
-            # Inspect the handler body that follows the route decorator to
-            # recover the real request/response contract instead of assuming
-            # a JSON ``prompt`` body (which breaks GET/query and text agents).
-            segment = text[match.end(): match.end() + 1600]
-            param_style, param_key = _detect_request_param(segment, text, method)
-            response_shape, response_path = _detect_response_contract(segment)
-            endpoints.append(
-                {
-                    "method": method,
-                    "path": path,
-                    "param_style": param_style,
-                    "param_key": param_key,
-                    "response_shape": response_shape,
-                    "response_path": response_path,
-                }
-            )
-    return endpoints[:30]
-
-
-def _detect_request_param(segment: str, full_text: str, method: str) -> tuple[str, str]:
-    """Return ``(param_style, param_key)`` for a detected endpoint.
-
-    ``param_style`` is ``query`` when the handler reads request query params (or
-    the method is GET) and ``json`` otherwise. ``param_key`` is the first known
-    user-input key referenced by the handler (falling back to a whole-file scan
-    and finally a method-appropriate default).
-    """
-
-    def _find(scope: str) -> str | None:
-        for candidate in PARAM_KEY_CANDIDATES:
-            needles = (
-                f'"{candidate}"',
-                f"'{candidate}'",
-                f'.get("{candidate}"',
-                f".get('{candidate}'",
-            )
-            if any(needle in scope for needle in needles):
-                return candidate
-        return None
-
-    param_key = _find(segment) or _find(full_text) or ("msg" if method == "GET" else "prompt")
-    if method == "GET":
-        param_style = "query"
-    elif any(sig in segment for sig in ("request.args", "request.query_params", ".query_params", "req.query")):
-        param_style = "query"
-    else:
-        param_style = "json"
-    return param_style, param_key
-
-
-def _detect_response_contract(segment: str) -> tuple[str, str]:
-    """Infer ``(response_shape, response_path)`` from a handler body.
-
-    Defaults to ``text`` (safer: the adapter returns the whole body) when the
-    shape cannot be determined.
-    """
-    seg = segment or ""
-    if any(sig in seg for sig in JSON_RESPONSE_SIGNALS) or re.search(r"return\s+\{", seg):
-        return "json", _detect_response_key(seg)
-    if any(sig in seg for sig in TEXT_RESPONSE_SIGNALS):
-        return "text", ""
-    if re.search(r"return\s+f?['\"]", seg):
-        return "text", ""
-    return "text", ""
-
-
-def _detect_response_key(segment: str) -> str:
-    for pattern in RESPONSE_KEY_PATTERNS:
-        match = pattern.search(segment)
-        if match:
-            return match.group(1)
-    return ""
-
-
-def _rank_endpoint(endpoint: dict[str, Any]) -> int:
-    path = str(endpoint.get("path") or "").lower()
-    tokens = {tok for tok in re.split(r"[^a-z0-9]+", path) if tok}
-    score = 0
-    if tokens & INFERENCE_PATH_TOKENS:
-        score += 3
-    if str(endpoint.get("param_key") or "") in USER_PARAM_KEYS:
-        score += 2
-    if str(endpoint.get("method") or "").upper() in {"POST", "PUT"}:
-        score += 1
-    if str(endpoint.get("response_shape") or "") == "json":
-        score += 1
-    return score
-
-
-def select_inference_endpoint(endpoints: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """Pick the endpoint most likely to be the agent's inference route.
-
-    Infrastructure routes (``/``, ``/health``, static, docs, …) are dropped
-    first; the remainder is ranked by path hints, user-param usage, method, and
-    response shape, preserving source order as the tie-breaker.
-    """
-    if not endpoints:
-        return None
-
-    def _is_infra(endpoint: dict[str, Any]) -> bool:
-        path = str(endpoint.get("path") or "").lower()
-        return path in NON_INFERENCE_PATHS or path.startswith(NON_INFERENCE_PREFIXES)
-
-    candidates = [ep for ep in endpoints if not _is_infra(ep)] or list(endpoints)
-    ranked = sorted(enumerate(candidates), key=lambda item: (-_rank_endpoint(item[1]), item[0]))
-    return dict(ranked[0][1])
-
-
-def _detect_env_vars(text: str) -> list[dict[str, Any]]:
-    envs: dict[str, dict[str, Any]] = {}
-    for pattern in ENV_PATTERNS:
-        for match in pattern.finditer(text):
-            name = match.group(1)
-            if not ENV_KEY_RE.match(name):
-                continue
-            default = match.group(2) if len(match.groups()) > 1 else ""
-            envs[name] = {"name": name, "required": not bool(default), "suggested": "", "secret": bool(SECRET_RE.search(name))}
-    return sorted(envs.values(), key=lambda item: item["name"])
-
-
-def _read_readme(path: Path) -> str:
-    for name in ("README.md", "README.rst", "readme.md"):
-        readme = path / name
-        if readme.exists():
-            return readme.read_text(encoding="utf-8", errors="ignore")[:4000]
-    return ""
 
 
 def provider_presets() -> dict[str, dict[str, Any]]:
@@ -754,10 +507,10 @@ def _container_run_state(container_name: str) -> tuple[str, bool]:
     not actually serving, even if a published host port looks connectable.
     """
     try:
-        out, _ = _run_docker(
+        out, _ = run_docker(
             ["inspect", "-f", "{{.State.Status}}|{{.State.Restarting}}", container_name]
         )
-    except RuntimeError:
+    except DockerCommandError:
         return "", False
     raw = (out or "").strip().splitlines()[0] if out else ""
     status, _, restarting = raw.partition("|")
@@ -783,40 +536,6 @@ def _wait_for_healthy(base_url: str, container_name: str, timeout: int = HEALTH_
     return False
 
 
-def _resolve_endpoint_contract(info: dict[str, Any], target_cfg: dict[str, Any], target_type: str) -> dict[str, Any]:
-    """Combine the detected inference endpoint with any explicit UI overrides.
-
-    Explicit ``payload.target`` fields always win so an operator can hand-fix a
-    contract the analyzer got wrong.
-    """
-    selected = select_inference_endpoint(info.get("endpoints") or []) or {}
-    contract = {
-        "method": str(selected.get("method") or ("POST" if target_type == "chat_completions" else "POST")).upper(),
-        "path": str(selected.get("path") or _default_endpoint_path(info, target_type)),
-        "param_style": str(selected.get("param_style") or "json"),
-        "param_key": str(selected.get("param_key") or "prompt"),
-        "response_shape": str(selected.get("response_shape") or "text"),
-        "response_path": str(selected.get("response_path") or ""),
-    }
-    if target_type == "chat_completions":
-        contract["path"] = str(target_cfg.get("endpoint_path") or "/v1/chat/completions")
-        contract["method"] = "POST"
-        return contract
-    if target_cfg.get("endpoint_path"):
-        contract["path"] = str(target_cfg["endpoint_path"])
-    if target_cfg.get("method"):
-        contract["method"] = str(target_cfg["method"]).upper()
-    if target_cfg.get("param_key"):
-        contract["param_key"] = str(target_cfg["param_key"])
-    if target_cfg.get("param_style"):
-        contract["param_style"] = str(target_cfg["param_style"])
-    if "response_extraction_path" in target_cfg:
-        response_path = str(target_cfg.get("response_extraction_path") or "")
-        contract["response_path"] = response_path
-        contract["response_shape"] = "json" if response_path else "text"
-    return contract
-
-
 def deploy_agent_project(project_id: str, payload: dict[str, Any], save_target_fn) -> DeploymentResult:
     deployment_mode = str(payload.get("deployment_mode") or "container").strip().lower()
     if deployment_mode not in DEPLOYMENT_MODES:
@@ -826,7 +545,7 @@ def deploy_agent_project(project_id: str, payload: dict[str, Any], save_target_f
 
     path, source, writable = _project_path(project_id)
     info = analyze_agent_project(project_id)
-    provider = payload.get("provider") if isinstance(payload.get("provider"), dict) else {}
+    provider = dict_field(payload, "provider")
     if deployment_mode == "hybrid":
         if not payload.get("authorization_acknowledged"):
             raise ValueError("hybrid deployments require authorization_acknowledged=true for the external model dependency")
@@ -834,13 +553,13 @@ def deploy_agent_project(project_id: str, payload: dict[str, Any], save_target_f
             raise ValueError("hybrid mode requires external model provider configuration (base_url or kind)")
     runtime_env = _validate_env_map(payload.get("env") or {})
     runtime_env.update(_provider_env(provider))
-    gpu = payload.get("gpu") if isinstance(payload.get("gpu"), dict) else {}
+    gpu = dict_field(payload, "gpu")
     gpu_mode = str(gpu.get("mode") or "cpu")
     ports = _normalise_ports(payload.get("ports") or info.get("ports") or [8000])
-    target_cfg = payload.get("target") if isinstance(payload.get("target"), dict) else {}
+    target_cfg = dict_field(payload, "target")
     target_type = str(target_cfg.get("type") or "http_json")
     target_profile = str(target_cfg.get("safety_profile") or "local_lab_safe")
-    contract = _resolve_endpoint_contract(info, target_cfg, target_type)
+    contract = resolve_endpoint_contract(info, target_cfg, target_type)
     pid = normalise_project_id(project_id)
     image_tag = f"vulnoraiq-agent-lab-{pid}".lower().replace("_", "-")
     container_name = f"vulnoraiq-agent-lab-{pid}".lower().replace("_", "-")
@@ -857,15 +576,15 @@ def deploy_agent_project(project_id: str, payload: dict[str, Any], save_target_f
         generated_dockerfile = True
 
     try:
-        _run_docker(["build", "-t", image_tag, str(path)])
-    except RuntimeError as exc:
+        run_docker(["build", "-t", image_tag, str(path)])
+    except DockerCommandError as exc:
         if generated_dockerfile:
             df_path.unlink(missing_ok=True)
         raise RuntimeError(f"build failed: {exc}") from exc
 
     try:
-        _run_docker(["rm", "-f", container_name])
-    except RuntimeError:
+        run_docker(["rm", "-f", container_name])
+    except DockerCommandError:
         pass
 
     env_flags: list[str] = []
@@ -920,7 +639,7 @@ def deploy_agent_project(project_id: str, payload: dict[str, Any], save_target_f
     if cpus:
         run_cmd += ["--cpus", cpus]
     run_cmd += port_flags + env_flags + [image_tag]
-    container_id, _ = _run_docker(run_cmd)
+    container_id, _ = run_docker(run_cmd)
 
     # Reach the container by container DNS in Docker Lab Mode, and by the
     # published loopback host port in Desktop Mode.
@@ -936,8 +655,8 @@ def deploy_agent_project(project_id: str, payload: dict[str, Any], save_target_f
         if not _wait_for_healthy(base_url, container_name, HEALTH_CHECK_TIMEOUT):
             logs = _safe_container_logs(container_name)
             try:
-                _run_docker(["rm", "-f", container_name])
-            except RuntimeError:
+                run_docker(["rm", "-f", container_name])
+            except DockerCommandError:
                 pass
             detail = f" Last container logs:\n{logs}" if logs else ""
             raise RuntimeError(
@@ -984,8 +703,8 @@ def deploy_agent_project(project_id: str, payload: dict[str, Any], save_target_f
 
 def _safe_container_logs(container_name: str, tail: int = 40) -> str:
     try:
-        out, err = _run_docker(["logs", "--tail", str(tail), container_name])
-    except RuntimeError:
+        out, err = run_docker(["logs", "--tail", str(tail), container_name])
+    except DockerCommandError:
         return ""
     return (out or err or "").strip()[:4000]
 
@@ -998,7 +717,7 @@ def _deploy_external_endpoint(project_id: str, payload: dict[str, Any], save_tar
     """
     if not payload.get("authorization_acknowledged"):
         raise ValueError("external endpoint deployments require authorization_acknowledged=true")
-    target_cfg = payload.get("target") if isinstance(payload.get("target"), dict) else {}
+    target_cfg = dict_field(payload, "target")
     target_type = str(target_cfg.get("type") or "http_json")
     target_profile = str(target_cfg.get("safety_profile") or "local_lab_safe")
     base_url = str(payload.get("base_url") or target_cfg.get("base_url") or "").strip().rstrip("/")
@@ -1015,7 +734,7 @@ def _deploy_external_endpoint(project_id: str, payload: dict[str, Any], save_tar
         # External endpoints need not have imported source; fall back to
         # whatever contract the operator supplied.
         pass
-    contract = _resolve_endpoint_contract(info, target_cfg, target_type)
+    contract = resolve_endpoint_contract(info, target_cfg, target_type)
     target_ids = _register_targets(
         save_target_fn=save_target_fn,
         project_id=pid,
@@ -1061,15 +780,6 @@ def _normalise_ports(values: Any) -> list[int]:
         if port not in ports:
             ports.append(port)
     return ports or [8000]
-
-
-def _default_endpoint_path(info: dict[str, Any], target_type: str) -> str:
-    if target_type == "chat_completions":
-        return "/v1/chat/completions"
-    endpoints = info.get("endpoints") or []
-    if endpoints:
-        return endpoints[0].get("path") or "/"
-    return "/"
 
 
 def _register_targets(save_target_fn, project_id: str, base_url: str, target_type: str, contract: dict[str, Any], safety_profile: str) -> list[str]:
@@ -1159,8 +869,8 @@ def _container_exists(container_name: str) -> bool:
     if not container_name:
         return False
     try:
-        out, _ = _run_docker(["ps", "-aq", "--filter", f"name=^{container_name}$"])
-    except RuntimeError:
+        out, _ = run_docker(["ps", "-aq", "--filter", f"name=^{container_name}$"])
+    except DockerCommandError:
         return False
     return bool(out.strip())
 
@@ -1206,7 +916,12 @@ def remove_deployment(identifier: str) -> dict[str, Any]:
     # infer removal from its exit code alone.
     existed = _container_exists(container_name)
     if existed:
-        _run_docker(["rm", "-f", container_name])
+        run_docker(["rm", "-f", container_name])
+    # The scan targets this deployment registered point at a container that no
+    # longer exists. Leaving them behind would offer the operator dead targets
+    # that fail only once a scan is started.
+    target_ids = [str(tid) for tid in (record.get("target_ids") or [])] if record else []
+    targets_removed = runtime_targets.delete_many(target_ids) if target_ids else 0
     records_dropped = _drop_deployment_records(container_name) if container_name else 0
     return {
         "deployment_id": deployment_id,
@@ -1214,4 +929,5 @@ def remove_deployment(identifier: str) -> dict[str, Any]:
         "container_name": container_name,
         "removed": existed,
         "records_removed": records_dropped,
+        "targets_removed": targets_removed,
     }

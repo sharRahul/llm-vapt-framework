@@ -11,6 +11,7 @@ from core.evidence_model import OwaspOracleRegistry
 from core.policy_engine import PolicyEngine
 from core.production_detection import ProductionOwaspDetector
 from core.real_scan import run_real_target_modules
+from core.runtime_targets import merge_into as merge_runtime_targets
 from core.test_runner import TestRunner
 from core.types import Finding, ScanContext, ScanResult, TargetClient
 from integrations.target_adapters import RealTargetClient
@@ -49,6 +50,30 @@ class Scanner:
         self.oracle_registry = OwaspOracleRegistry()
         self.production_detector = ProductionOwaspDetector()
 
+    def validate_scan(
+        self,
+        target_name: str,
+        profile_name: str = "baseline",
+        authorised: bool = True,
+    ) -> None:
+        """Run every pre-flight check without sending a single request.
+
+        Callers that report progress need to know the target and authorisation
+        are genuinely valid *before* they say so. Raises the same errors
+        :meth:`scan` would raise for the same configuration.
+        """
+        config = self._load_config()
+        self._resolve_profile(config, profile_name)
+        self._require_authorisation(authorised=authorised, policy=config.get("policies", {}))
+        self._default_target(target_name, config=config)
+
+    @staticmethod
+    def _resolve_profile(config: dict[str, Any], profile_name: str) -> dict[str, Any]:
+        profile = config["attack_profiles"].get("profiles", {}).get(profile_name)
+        if not profile:
+            raise ValueError(f"Unknown assessment profile: {profile_name}")
+        return profile
+
     def scan(
         self,
         target_name: str,
@@ -57,10 +82,7 @@ class Scanner:
         authorised: bool = True,
     ) -> ScanResult:
         config = self._load_config()
-        profile = config["attack_profiles"].get("profiles", {}).get(profile_name)
-        if not profile:
-            raise ValueError(f"Unknown assessment profile: {profile_name}")
-
+        profile = self._resolve_profile(config, profile_name)
         self._require_authorisation(authorised=authorised, policy=config.get("policies", {}))
         target_client = target or self._default_target(target_name, config=config)
         context = ScanContext(
@@ -201,7 +223,7 @@ class Scanner:
                 return yaml.safe_load(handle) or {}
 
         targets = load_yaml(os.getenv("VULNORAIQ_TARGET_CONFIG", "targets.yaml"))
-        self._merge_runtime_targets(targets)
+        targets["targets"] = merge_runtime_targets(targets.get("targets") or {})
         return {
             "default": load_yaml("default.yaml"),
             "targets": targets,
@@ -210,20 +232,3 @@ class Scanner:
             "safety_profiles": load_yaml("safety_profiles.yaml"),
         }
 
-    @staticmethod
-    def _merge_runtime_targets(targets: dict[str, Any]) -> None:
-        runtime_targets_path = Path(
-            os.getenv(
-                "VULNORAIQ_RUNTIME_TARGETS_PATH",
-                str(Path(os.getenv("VULNORAIQ_WEB_OUTPUT_ROOT", "reports/output/webui")) / "runtime_targets.yaml"),
-            )
-        )
-        if not runtime_targets_path.exists():
-            return
-        runtime_targets = yaml.safe_load(runtime_targets_path.read_text(encoding="utf-8")) or {}
-        if not isinstance(runtime_targets, dict):
-            return
-        configured_targets = targets.setdefault("targets", {})
-        for name, target in (runtime_targets.get("targets") or {}).items():
-            if isinstance(target, dict):
-                configured_targets[str(name)] = target

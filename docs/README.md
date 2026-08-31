@@ -1,102 +1,90 @@
-# VulnoraIQ Documentation
+# VulnoraIQ documentation
 
-This folder documents the current VulnoraIQ `0.3.0` codebase.
+Maintained documentation for VulnoraIQ `0.3.0`, a self-hosted AI security
+assessment application. The project overview and quick start live in the
+[root README](../README.md); this page is the map of everything else.
 
-> **Current posture:** self-hosted AI security testing application with Desktop Mode for laptop/workstation use and Docker Lab Mode for server, VM, CI, and dev-lab use.  
-> **Current WebUI:** React 18 + TypeScript + Vite console served by the hosted WebUI server.  
-> **Default network boundary:** local WebUI launchers bind to host loopback at `127.0.0.1:8787`.  
-> **Assessment boundary:** findings are structured internal evidence requiring human review. VulnoraIQ is not certified VAPT-grade assurance.
+## Getting started
 
-## Current status snapshot
-
-| Area | Status |
+| Document | What it covers |
 | --- | --- |
-| Desktop Mode | Implemented for source/release-package use: VulnoraIQ starts natively on the host, uses Docker only for sandboxed Agent Lab runtimes, stores reports under `scan-reports/`, and stores Agent Lab projects under `agent-lab/`. |
-| Docker Lab | Implemented for advanced local lab, CI, VM, and server-style testing. `docker-compose.yml` starts `vulnoraiq-web` on a private Docker network with loopback-only WebUI publishing. |
-| Experimental Agent Lab | Implemented as an experimental local-lab workflow at `/agent-lab` for importing real AI-agent projects, configuring model providers, selecting CPU/GPU runtime options, building/running containers, auto-creating targets, and launching authorised scans. |
-| Target support | Complete for the current approved local/internal scope with HTTP JSON, chat-completions, Ollama generate, RAG query, webhook JSON, and dry-run tool-loop contracts. |
-| WebUI | Current supported UI is the React SecOps console in `webui/console/`, built to `webui/static/console/`. A clean start shows no dummy assets, findings, or dashboard data. |
-| WebUI backend | Target management, scan launch, SSE progress, finding actions/history, assistant model controls, and Agent Lab APIs are implemented. |
-| CLI | `vulnoraiq` supports `targets list`, `targets validate`, `scan`, `reports list`, `jobs list`, and `jobs show`. |
-| Security hardening | Auth, trusted proxy mode, CSRF, request limits, rate limiting, security headers, audit logs, metrics, artifact path protection, production startup validation, and loopback-only local publishing. Agent Lab remains experimental because it can build and run local Docker containers. |
-| CI | Normal PR/main quality gates are consolidated into `.github/workflows/ci.yml`: Python matrix, Ruff, mypy, pytest, dependency checks, validators, hosted WebUI flow, functional acceptance, and artifacts. Release and supply-chain workflows remain separate from normal CI. |
-| Release/packaging | Release-only platform artifact and Python package workflows are documented; native OS certificate-signed installers and bundled desktop runtime remain future maturity work. |
+| [Installation](getting-started/installation.md) | Requirements, install paths, and first launch. |
+| [Quick start](getting-started/quick-start.md) | First assessment end to end: configure, target, scan, review. |
+| [Configuration](getting-started/configuration.md) | What is configurable, where it lives, and precedence. |
 
-## Start here
+## Guides
 
-| Need | Document |
+| Document | What it covers |
 | --- | --- |
-| Project overview and quick start | [`../README.md`](../README.md) |
-| End-to-end user guide | [`USER_GUIDE.md`](USER_GUIDE.md) |
-| Manual QA regression test plan | [`MANUAL_TEST_PLAN.md`](MANUAL_TEST_PLAN.md) |
-| Prompt for Codex/Claude Code/manual LLM testers | [`LLM_MANUAL_TESTING_PROMPT.md`](LLM_MANUAL_TESTING_PROMPT.md) |
-| Desktop vs Docker Lab run modes | [`RUN_MODES_DESKTOP_AND_DOCKER_LAB.md`](RUN_MODES_DESKTOP_AND_DOCKER_LAB.md) |
-| Experimental Agent Lab workflow | [`AGENT_LAB.md`](AGENT_LAB.md) |
-| Docker Lab startup and troubleshooting | [`DOCKER_TESTING.md`](DOCKER_TESTING.md) |
-| Safety model and authorisation rules | [`SAFETY_MODEL.md`](SAFETY_MODEL.md) |
-| Target configuration and runtime target rules | [`TARGET_CONFIGURATION.md`](TARGET_CONFIGURATION.md) |
-| WebUI operator guide | [`WEBUI_GUIDE.md`](WEBUI_GUIDE.md) |
-| WebUI categorized test catalogue | [`WEB_UI_TEST_CATALOG.md`](WEB_UI_TEST_CATALOG.md) |
-| CLI usage | [`CLI_GUIDE.md`](CLI_GUIDE.md) |
-| AI-agent testing flow | [`AI_AGENT_TESTING.md`](AI_AGENT_TESTING.md) |
-| Deployment guide | [`DEPLOYMENT.md`](DEPLOYMENT.md) |
-| Operations runbook | [`RUNBOOK.md`](RUNBOOK.md) |
-| Incident response | [`INCIDENT_RESPONSE.md`](INCIDENT_RESPONSE.md) |
-| Release checklist | [`RELEASE_CHECKLIST.md`](RELEASE_CHECKLIST.md) |
-| Release artifacts | [`RELEASE_ARTIFACTS.md`](RELEASE_ARTIFACTS.md) |
-| Supply-chain pipeline | [`SUPPLY_CHAIN_PIPELINE.md`](SUPPLY_CHAIN_PIPELINE.md) |
-| Python package publishing | [`PYPI_PACKAGE.md`](PYPI_PACKAGE.md) |
-| Migration from legacy versions | [`MIGRATION.md`](MIGRATION.md) |
-| Current implementation status | [`IMPLEMENTATION_STATUS.md`](IMPLEMENTATION_STATUS.md) |
-| Production scorecard | [`PRODUCTION_READINESS_SCORECARD.md`](PRODUCTION_READINESS_SCORECARD.md) |
-| Hardening backlog | [`PRODUCTION_HARDENING_BACKLOG.md`](PRODUCTION_HARDENING_BACKLOG.md) |
-| Assessment assurance limitations | [`ASSESSMENT_ASSURANCE.md`](ASSESSMENT_ASSURANCE.md) |
-| Future OIDC/JWT auth plan | [`future-plans/OIDC_JWT_AUTH_PLAN.md`](future-plans/OIDC_JWT_AUTH_PLAN.md) |
+| [Desktop Mode](guides/desktop-mode.md) | Running VulnoraIQ on your own machine. |
+| [Lab Mode](guides/lab-mode.md) | The full containerised lab under Docker Compose. |
+| [Web console](guides/web-console.md) | The browser console and its workspaces. |
+| [Agents (Agent Lab)](guides/agents.md) | Importing, building, and running an agent as a scan target. |
+| [Model providers](guides/model-providers.md) | Providers for imported agents, and the optional in-app assistant. |
+| [Targets](guides/targets.md) | Defining and validating what VulnoraIQ is allowed to assess. |
+| [Assessments](guides/assessments.md) | Running authorised assessments against real targets. |
+| [Findings and evidence](guides/findings.md) | How results are produced, ranked, and reviewed. |
+| [Operations](guides/operations.md) | Day-to-day running, backup, and restore. |
+| [Troubleshooting](guides/troubleshooting.md) | Symptoms, causes, and checks. |
 
-## Security-framework documentation
+## Security
 
-| Area | Document |
+| Document | What it covers |
 | --- | --- |
-| OWASP AI Testing Guide current integration | [`AI_TESTING_GUIDE_INTEGRATION.md`](AI_TESTING_GUIDE_INTEGRATION.md) |
-| OWASP LLM framework/control mapping roadmap | [`OWASP_LLM_TOP10_MAPPING_IMPLEMENTATION_PLAN.md`](OWASP_LLM_TOP10_MAPPING_IMPLEMENTATION_PLAN.md) |
-| OWASP LLM 2025 category specs | [`owasp/`](owasp/) |
-| OWASP to MITRE ATLAS crosswalk | [`owasp/OWASP_TO_MITRE_ATLAS_CROSSWALK.md`](owasp/OWASP_TO_MITRE_ATLAS_CROSSWALK.md) |
-| MITRE ATLAS matrix | [`MITRE_ATLAS_AI_MATRIX.md`](MITRE_ATLAS_AI_MATRIX.md) |
-| MITRE ATLAS mapping notes | [`mitre-atlas-mapping.md`](mitre-atlas-mapping.md) |
-| Source document review index | [`owasp-documents/`](owasp-documents/) |
+| [Security model](security/security-model.md) | Trust boundaries, authorisation, and scope enforcement. |
+| [Sandboxing](security/sandboxing.md) | How agent containers are isolated, and what that does not cover. |
+| [Secrets](security/secrets.md) | Where credentials are allowed to live. |
+| [Responsible use](security/responsible-use.md) | Authorisation expectations before assessing anything. |
+| [Assessment assurance](security/assurance.md) | What VulnoraIQ findings do and do not claim. |
+| [Incident response](security/incident-response.md) | Handling a problem in a VulnoraIQ deployment. |
+| [Supply chain](security/supply-chain.md) | Dependency and image supply-chain controls. |
 
-## WebUI and future planning
+## Development
 
-| Document | Current meaning |
+| Document | What it covers |
 | --- | --- |
-| [`WEBUI_LAYOUT_PLAN.md`](WEBUI_LAYOUT_PLAN.md) | Future layout direction. Parts are implemented by the React SecOps console, target-management workspace, and experimental Agent Lab. |
-| [`WEBUI_RELEASE_HARDENING.md`](WEBUI_RELEASE_HARDENING.md) | Release checks for package-data static assets, browser tests, and production WebUI hardening. |
-| [`future-plans/OIDC_JWT_AUTH_PLAN.md`](future-plans/OIDC_JWT_AUTH_PLAN.md) | Future enterprise identity plan. OIDC/JWT is not required for current local single-user use. |
+| [Development setup](development/development-setup.md) | Getting a working development environment. |
+| [Testing](development/testing.md) | The test suites and how to run them. |
+| [Docker](development/docker.md) | Building and validating the container image. |
+| [Frontend build](development/frontend-build.md) | Building the React console into served assets. |
+| [Module authoring](development/module-authoring.md) | Adding assessment modules and payloads. |
+| [Release process](development/release-process.md) | Release checklist and gates. |
+| [Release artifacts](development/release-artifacts.md) | What a release produces. |
+| [Python package](development/python-package.md) | Publishing the distribution. |
+| [Contributing](../CONTRIBUTING.md) | Contribution workflow. |
 
-## Ready-to-remove review queue
+## Reference
 
-Completed or superseded planning documents have been moved into [`ready-to-remove/`](ready-to-remove/) for maintainer review. They are intentionally out of the active docs index so normal readers use current guides, status, assurance, and future-plan documents instead.
+| Document | What it covers |
+| --- | --- |
+| [Configuration files](reference/configuration.md) | Every YAML file VulnoraIQ reads. |
+| [Environment variables](reference/environment-variables.md) | Every environment variable, with defaults and sensitivity. |
+| [HTTP API](reference/api.md) | The endpoints the console and integrations use. |
+| [CLI](reference/cli.md) | `vulnoraiq` commands. |
+| [Migration](reference/migration.md) | Moving from earlier versions. |
+| [OWASP LLM Top 10 mapping](reference/owasp-llm-mapping.md) | Category-to-implementation mapping. |
+| [OWASP LLM category specs](owasp/) | Per-category assessment notes. |
+| [OWASP → MITRE ATLAS crosswalk](owasp/OWASP_TO_MITRE_ATLAS_CROSSWALK.md) | Crosswalk between the two frameworks. |
+| [MITRE ATLAS matrix](reference/mitre-atlas-matrix.md) | Generated ATLAS matrix. |
+| [MITRE ATLAS mapping](reference/mitre-atlas-mapping.md) | How mappings are maintained. |
+| [OWASP AI Testing Guide](reference/ai-testing-guide.md) | AITG coverage. |
 
-## Maintenance rule
+## Plans
 
-When code changes alter deployment posture, target support, WebUI behaviour, release gates, CI gates, or assessment claims, update these together:
+[`plans/`](plans/) is the only place in this repository that holds planning
+documents. Completed and historical plans are not kept here.
 
-1. `README.md`
-2. `docs/README.md`
-3. `docs/USER_GUIDE.md`
-4. `docs/MANUAL_TEST_PLAN.md`
-5. `docs/LLM_MANUAL_TESTING_PROMPT.md`
-6. `docs/IMPLEMENTATION_STATUS.md`
-7. `docs/DOCKER_TESTING.md`
-8. `docs/WEBUI_GUIDE.md`
-9. `docs/CLI_GUIDE.md`
-10. `docs/SAFETY_MODEL.md`
-11. `docs/TARGET_CONFIGURATION.md`
-12. `docs/PRODUCTION_READINESS_SCORECARD.md`
-13. `docs/PRODUCTION_HARDENING_BACKLOG.md`
-14. `docs/ASSESSMENT_ASSURANCE.md`
-15. `docs/SUPPLY_CHAIN_PIPELINE.md`
-16. `SECURITY.md`
-17. `CHANGELOG.md`
+| Document | What it is |
+| --- | --- |
+| [To be fixed](plans/TO_BE_FIXED.md) | Defects found by driving the console end to end. |
+| [Still missing](plans/STILL_MISSING.md) | Gaps between the intended architecture and the implementation. |
+| [Plan index](plans/README.md) | Proposed work, with a suggested order. |
 
-If a capability is complete only for the current local/internal scope, mark that scope clearly. Do not convert framework coverage, synthetic harness coverage, or successful local scans into certified assurance claims.
+## Keeping documentation honest
+
+Every claim in these pages must be verifiable against the implementation.
+When a change alters deployment posture, target support, console behaviour,
+security boundaries, or release gates, update the affected page in the same
+change. Do not turn framework coverage, synthetic fixture coverage, or a
+successful local scan into a certified assurance claim — see
+[assessment assurance](security/assurance.md).

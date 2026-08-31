@@ -28,6 +28,14 @@ jobs:
           pip install -e .[dev]
           pip install pip-audit
 
+      - name: No environment files are tracked
+        run: |
+          matches=$(git ls-files | grep -E '(^|/)\.env($|\.)' || true)
+          if [ -n "$matches" ]; then
+            echo "Tracked environment files found:"; echo "$matches"; exit 1
+          fi
+          echo "No .env files are tracked."
+
       - name: Dependency consistency check
         run: python -m pip check
 
@@ -140,3 +148,38 @@ jobs:
             reports/output/ci-demo-report.sarif
             reports/output/ci-demo-dashboard.md
             reports/output/ci-demo-dashboard.html
+
+  docker:
+    name: Docker image build and smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build the image
+        run: docker compose build vulnoraiq-web
+
+      - name: Start the lab
+        run: docker compose up -d vulnoraiq-web
+
+      - name: Wait for health
+        run: |
+          for _ in $(seq 1 60); do
+            status=$(docker inspect -f '{{.State.Health.Status}}' vulnoraiq-web 2>/dev/null || echo starting)
+            if [ "$status" = "healthy" ]; then echo "container healthy"; exit 0; fi
+            sleep 5
+          done
+          echo "container did not become healthy"; docker compose logs vulnoraiq-web; exit 1
+
+      - name: Verify the API answers
+        run: |
+          curl -fsS http://127.0.0.1:8787/healthz
+          curl -fsS -o /dev/null http://127.0.0.1:8787/readyz
+
+      - name: Collect logs on failure
+        if: failure()
+        run: docker compose logs vulnoraiq-web
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v

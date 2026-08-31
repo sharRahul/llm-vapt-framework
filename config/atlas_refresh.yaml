@@ -5,7 +5,7 @@ source:
   local_fallback: config/mitre_atlas_mapping.yaml
 output:
   mapping_path: config/mitre_atlas_mapping.yaml
-  matrix_doc_path: docs/MITRE_ATLAS_AI_MATRIX.md
+  matrix_doc_path: docs/reference/mitre-atlas-matrix.md
 rules:
   - Refresh tooling must validate generated mappings before writing over the working catalog.
   - Matrix documentation should be regenerated from the same official source before new payload work is marked complete.

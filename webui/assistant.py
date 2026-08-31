@@ -1,4 +1,3 @@
-# mypy: ignore-errors
 from __future__ import annotations
 
 import os
@@ -8,6 +7,7 @@ from typing import Any
 
 from webui import assistant_knowledge, assistant_tools
 from webui.assistant_llm import LocalAssistantModel, ModelUnavailable
+from webui.payload import dict_field
 
 
 @dataclass(slots=True)
@@ -74,7 +74,7 @@ class AssistantOrchestrator:
         started = time.monotonic()
         settings = self._settings(payload)
         prompt = self._prompt(payload)
-        finding = payload.get("finding") if isinstance(payload.get("finding"), dict) else {}
+        finding = dict_field(payload, "finding")
         content, backend, tools_used = self._respond(settings, prompt, finding)
         return {
             "role": "assistant",
@@ -179,7 +179,7 @@ class AssistantOrchestrator:
             return self._templated_chat(prompt, finding_ctx, kb, fetched, cve_block, available=False, error=str(exc)), "templated", tools_used
 
     def _settings(self, payload: dict[str, Any]) -> AssistantSettings:
-        controls = payload.get("controls") if isinstance(payload.get("controls"), dict) else {}
+        controls = dict_field(payload, "controls")
         provider = str(controls.get("provider") or self.provider or "local").strip().lower()
         model = str(controls.get("model") or self.default_model).strip()
         if not model:

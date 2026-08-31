@@ -16,6 +16,7 @@ import {
   ChevronDown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { apiGet, apiPost } from "@/lib/api";
 
 /**
  * Projects — import an AI agent codebase, then deploy it as a working, scannable
@@ -99,24 +100,6 @@ interface ProjectImporterProps {
   onNavigate?: (view: "overview" | "workspace" | "targets" | "agents" | "projects") => void;
 }
 
-async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, { credentials: "same-origin", ...options });
-  if (!response.ok) throw new Error((await response.text()) || response.statusText);
-  return response.json() as Promise<T>;
-}
-
-async function csrfToken(): Promise<string> {
-  return (await api<{ csrf_token: string }>("/api/csrf-token")).csrf_token;
-}
-
-function postJson<T>(path: string, body: unknown, token: string): Promise<T> {
-  return api<T>(path, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "X-CSRF-Token": token },
-    body: JSON.stringify(body),
-  });
-}
-
 function formatBytes(bytes?: number): string {
   if (!bytes || bytes <= 0) return "—";
   const units = ["B", "KB", "MB", "GB"];
@@ -180,7 +163,7 @@ export function ProjectImporter({ onTargetsChanged, onRunScan, onNavigate }: Pro
     setLoading(true);
     setError("");
     try {
-      const data = await api<AgentLabState>("/api/agent-lab");
+      const data = await apiGet<AgentLabState>("/api/agent-lab");
       setProjects(data.projects || []);
       setRunMode(data.run_mode || "");
       setProviderPresets(data.provider_presets || {});
@@ -214,7 +197,7 @@ export function ProjectImporter({ onTargetsChanged, onRunScan, onNavigate }: Pro
     setAuthAck(false);
     setAnalyzing(true);
     try {
-      const data = await api<ProjectAnalysis>(`/api/agent-lab/projects/${encodeURIComponent(id)}/analyze`);
+      const data = await apiGet<ProjectAnalysis>(`/api/agent-lab/projects/${encodeURIComponent(id)}/analyze`);
       setAnalysis(data);
       // Container mode needs a Dockerfile or a generatable framework; if neither,
       // nudge toward External mode so the flow never dead-ends.
@@ -248,12 +231,8 @@ export function ProjectImporter({ onTargetsChanged, onRunScan, onNavigate }: Pro
         zip.file(inner, file);
       }
       const base64 = await zip.generateAsync({ type: "base64", compression: "DEFLATE" });
-      const token = await csrfToken();
-      const result = await postJson<{ project_id: string }>(
-        "/api/agent-lab/import/archive",
-        { archive_base64: base64, project_id: projectId },
-        token,
-      );
+      const result = await apiPost<{ project_id: string }>("/api/agent-lab/import/archive",
+        { archive_base64: base64, project_id: projectId });
       setNotice(`Imported “${result.project_id}” from folder.`);
       await refresh();
       await selectProject(result.project_id);
@@ -271,12 +250,8 @@ export function ProjectImporter({ onTargetsChanged, onRunScan, onNavigate }: Pro
     setNotice("");
     setBusy("git");
     try {
-      const token = await csrfToken();
-      const result = await postJson<{ project_id: string }>(
-        "/api/agent-lab/import/git",
-        { url: gitUrl.trim(), branch: gitBranch.trim() || undefined },
-        token,
-      );
+      const result = await apiPost<{ project_id: string }>("/api/agent-lab/import/git",
+        { url: gitUrl.trim(), branch: gitBranch.trim() || undefined });
       setNotice(`Cloned “${result.project_id}” from Git.`);
       setGitUrl("");
       setGitBranch("");
@@ -294,8 +269,7 @@ export function ProjectImporter({ onTargetsChanged, onRunScan, onNavigate }: Pro
     setNotice("");
     setBusy(`del:${id}`);
     try {
-      const token = await csrfToken();
-      await postJson(`/api/agent-lab/projects/${encodeURIComponent(id)}/delete`, {}, token);
+      await apiPost(`/api/agent-lab/projects/${encodeURIComponent(id)}/delete`, {});
       setNotice(`Removed “${id}”.`);
       if (selectedId === id) { setSelectedId(""); setAnalysis(null); setDeployment(null); }
       await refresh();
@@ -348,12 +322,8 @@ export function ProjectImporter({ onTargetsChanged, onRunScan, onNavigate }: Pro
         // contract — this is the auto-target behaviour we want to showcase.
         target: { type: targetType, safety_profile: "local_lab_safe" },
       };
-      const token = await csrfToken();
-      const result = await postJson<DeploymentResult>(
-        `/api/agent-lab/projects/${encodeURIComponent(selectedId)}/deploy`,
-        body,
-        token,
-      );
+      const result = await apiPost<DeploymentResult>(`/api/agent-lab/projects/${encodeURIComponent(selectedId)}/deploy`,
+        body);
       if (!result.deployed || !(result.target_ids || []).length) {
         throw new Error("Deploy did not register a target. Check the deployment logs and retry.");
       }

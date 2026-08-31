@@ -10,7 +10,7 @@ def test_score_finding_caps_at_ten():
         owasp_id="LLM01:2025",
         affected_component="test",
         evidence={"a": 1, "b": 2, "c": 3, "d": 4, "e": 5},
-        mitre_atlas=["ATLAS-MAP-TODO"],
+        mitre_atlas=["AML.T0051"],
     )
 
     assert score_finding(finding) <= 10.0

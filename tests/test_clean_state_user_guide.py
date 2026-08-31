@@ -29,10 +29,10 @@ def test_webui_mock_data_module_is_removed() -> None:
 
 
 def test_user_guide_exists_and_documents_clean_state_flow() -> None:
-    guide = (ROOT / "docs" / "USER_GUIDE.md").read_text(encoding="utf-8")
+    guide = (ROOT / "docs" / "getting-started" / "quick-start.md").read_text(encoding="utf-8")
 
     required = [
-        "# VulnoraIQ User Guide",
+        "# Quick start",
         "Docker GUI lab",
         "Clean workspace",
         "does not show sample findings",
@@ -49,5 +49,5 @@ def test_readme_and_docs_index_link_user_guide() -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
     docs_index = (ROOT / "docs" / "README.md").read_text(encoding="utf-8")
 
-    assert "docs/USER_GUIDE.md" in readme
-    assert "USER_GUIDE.md" in docs_index
+    assert "docs/getting-started/quick-start.md" in readme
+    assert "getting-started/quick-start.md" in docs_index

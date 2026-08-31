@@ -1,4 +1,4 @@
-import { ChevronRight, Clock } from "lucide-react";
+import { AlertTriangle, ChevronRight, Clock } from "lucide-react";
 import type { Asset, Finding } from "@/types";
 import { assetTypeMeta } from "@/lib/assets";
 import { severityStyles } from "@/lib/severity";
@@ -25,6 +25,7 @@ export function AssetFindingCard({
 }: AssetFindingCardProps) {
   const meta = assetTypeMeta[asset.type];
   const Icon = meta.icon;
+  const failed = asset.scanStatus === "failed";
 
   return (
     <div className="rounded-md border border-border bg-card shadow-card transition-shadow hover:shadow-card-hover">
@@ -52,12 +53,28 @@ export function AssetFindingCard({
             {asset.locator}
           </span>
           <span className="mt-2 flex flex-wrap items-center gap-1.5">
-            <SeverityBadge severity={asset.highestSeverity} />
-            <RiskScoreBadge score={asset.riskScore} />
-            <span className="inline-flex items-center rounded-sm border border-border bg-muted px-1.5 py-0.5 text-[11px] font-semibold text-muted-foreground">
-              {asset.vulnerabilityCount} {asset.vulnerabilityCount === 1 ? "vuln" : "vulns"}
-            </span>
+            {failed ? (
+              // A scan that never ran produced no evidence. Showing it as
+              // "info / 0 vulns" would read as a clean result.
+              <span className="inline-flex items-center gap-1 rounded-sm border border-[var(--sev-high)] bg-[var(--sev-high)]/10 px-1.5 py-0.5 text-[11px] font-bold text-[var(--sev-high)]">
+                <AlertTriangle className="size-3 shrink-0" />
+                Scan failed
+              </span>
+            ) : (
+              <>
+                <SeverityBadge severity={asset.highestSeverity} />
+                <RiskScoreBadge score={asset.riskScore} />
+                <span className="inline-flex items-center rounded-sm border border-border bg-muted px-1.5 py-0.5 text-[11px] font-semibold text-muted-foreground">
+                  {asset.vulnerabilityCount} {asset.vulnerabilityCount === 1 ? "vuln" : "vulns"}
+                </span>
+              </>
+            )}
           </span>
+          {failed && asset.scanError ? (
+            <span className="mt-1.5 block break-anywhere text-[11px] font-medium text-[var(--sev-high)]" title={asset.scanError}>
+              {asset.scanError}
+            </span>
+          ) : null}
           <span className="mt-1.5 flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground">
             <Clock className="size-3 shrink-0" />
             <span className="truncate">{meta.label} · scanned {formatRelativeTime(asset.lastScanned)}</span>

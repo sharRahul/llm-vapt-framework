@@ -37,15 +37,8 @@ def test_supply_chain_workflow_has_safe_publish_and_gate_controls() -> None:
 
 def test_supply_chain_docs_are_linked_from_docs_index() -> None:
     docs_index = Path("docs/README.md").read_text(encoding="utf-8")
-    pipeline_doc = Path("docs/SUPPLY_CHAIN_PIPELINE.md").read_text(encoding="utf-8")
-    backlog = Path("docs/PRODUCTION_HARDENING_BACKLOG.md").read_text(encoding="utf-8")
-    status = Path("docs/IMPLEMENTATION_STATUS.md").read_text(encoding="utf-8")
+    pipeline_doc = Path("docs/security/supply-chain.md").read_text(encoding="utf-8")
 
-    assert "SUPPLY_CHAIN_PIPELINE.md" in docs_index
+    assert "security/supply-chain.md" in docs_index
     assert "scan reports" in pipeline_doc
     assert "Cosign" in pipeline_doc
-    current_backlog = backlog.split("## Current maturity backlog", 1)[1].split("## Production claim rule", 1)[0]
-    assert "Container supply chain" not in current_backlog
-    assert "Security testing pipeline" not in current_backlog
-    assert "Supply-chain workflow" in backlog
-    assert "Supply-chain workflow" in status

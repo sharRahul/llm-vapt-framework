@@ -14,12 +14,10 @@ INCLUDE = [
     "CHANGELOG.md",
     "pyproject.toml",
     "package.json",
-    "docs/SAFETY_MODEL.md",
-    "docs/TARGET_CONFIGURATION.md",
-    "docs/PRODUCTION_READINESS_SCORECARD.md",
-    "docs/PRODUCTION_HARDENING_BACKLOG.md",
-    "docs/ASSESSMENT_ASSURANCE.md",
-    "docs/INDEPENDENT_ASSURANCE_REVIEW.md",
+    "docs/security/security-model.md",
+    "docs/security/assurance.md",
+    "docs/security/sandboxing.md",
+    "docs/guides/targets.md",
     "benchmarks/fixtures/aitg/aitg_32_manifest.yaml",
     "config/attack_profiles.yaml",
 ]
@@ -32,7 +30,7 @@ def sha(path: Path) -> str:
 def git(args: list[str]) -> str:
     try:
         return subprocess.check_output(["git", *args], text=True).strip()
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         return "unknown"
 
 
@@ -68,7 +66,9 @@ def main() -> None:
         )
         bundle.writestr(
             "assurance/release_checklist.txt",
-            Path("docs/RELEASE_CHECKLIST.md").read_text() if Path("docs/RELEASE_CHECKLIST.md").exists() else "",
+            Path("docs/development/release-process.md").read_text(encoding="utf-8")
+            if Path("docs/development/release-process.md").exists()
+            else "",
         )
         bundle.writestr("assurance/manifest.json", json.dumps(manifest, indent=2, sort_keys=True))
         bundle.writestr("assurance/checksums.sha256", "\n".join(f"{item['sha256']}  {item['path']}" for item in files))

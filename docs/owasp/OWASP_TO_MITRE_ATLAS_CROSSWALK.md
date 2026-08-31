@@ -11,7 +11,7 @@ This document maps VulnoraIQ's OWASP AI security coverage areas to MITRE ATLAS t
 | Source | Version/date | Usage in this crosswalk |
 | --- | --- | --- |
 | `docs/owasp/` | VulnoraIQ OWASP LLM 2025 docs | Existing LLM category implementation specs. |
-| `docs/MITRE_ATLAS_AI_MATRIX.md` | MITRE ATLAS `2026.05` snapshot | ATLAS tactic baseline used by VulnoraIQ. |
+| `docs/reference/mitre-atlas-matrix.md` | MITRE ATLAS `2026.05` snapshot | ATLAS tactic baseline used by VulnoraIQ. |
 | `docs/owasp-documents/OWASP-GenAI-COMPASS-RunBook-1.0.pdf` | Version 1.0, July 2025 | COMPASS/OODA operating model and threat-informed resilience workflow. |
 | `docs/owasp-documents/OWASP-GenAI-Data-Security-Risks-and-Mitigations-2026-v1.0.pdf` | Version 1.0, March 2026 | Confirmed `DSGAI01` through `DSGAI21` category names. |
 | `docs/owasp-documents/OWASP-Top-10-for-Agentic-Applications-2026-12.6.pdf` | Version 2026, December 2025 | Confirmed `ASI01` through `ASI10` category names. |

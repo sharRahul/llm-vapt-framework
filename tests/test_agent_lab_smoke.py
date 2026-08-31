@@ -2,7 +2,7 @@ from pathlib import Path
 
 import yaml
 
-from webui import agent_lab
+from webui import agent_analysis, agent_lab
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -52,7 +52,7 @@ def test_detect_endpoints_handles_bare_flask_route():
     # A bare @app.route without methods= must not crash endpoint detection
     # (regression: optional regex group returned None -> None.upper()).
     text = '@app.route("/")\n@app.route("/get", methods=["POST"])\n@app.route("/refresh")'
-    endpoints = agent_lab._detect_endpoints(text)
+    endpoints = agent_analysis.detect_endpoints(text)
     pairs = {(e["method"], e["path"]) for e in endpoints}
     assert ("GET", "/") in pairs
     assert ("POST", "/get") in pairs
@@ -73,13 +73,13 @@ def test_remove_deployment_resolves_identifier_and_avoids_false_success(tmp_path
     state = {"exists": False}
     calls: list[list[str]] = []
 
-    def fake_run_docker(args):
+    def fakerun_docker(args):
         calls.append(args)
         if args[:2] == ["ps", "-aq"]:
             return ("abc123" if state["exists"] else "", "")
         return ("", "")
 
-    monkeypatch.setattr(agent_lab, "_run_docker", fake_run_docker)
+    monkeypatch.setattr(agent_lab, "run_docker", fakerun_docker)
 
     # Resolve by deployment_id; container absent -> removed must be False and
     # no `docker rm` is issued (no false success that leaks a container).

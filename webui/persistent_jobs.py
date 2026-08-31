@@ -80,6 +80,7 @@ class PersistedScanJob:
                 message,
                 progress,
                 level,
+                event_id=len(self.events) + 1,
                 type=etype,
                 phase=stage,
                 data={},
@@ -97,6 +98,35 @@ class PersistedScanJob:
         events = [PersistedScanEvent(**event) for event in data.get("events", [])]
         data = {**data, "events": events}
         return cls(**data)
+
+
+FINDING_STATE_FIELDS: tuple[str, ...] = (
+    "status",
+    "severity",
+    "triage_state",
+    "owner",
+    "remediation_note",
+    "due_date",
+    "false_positive_reason",
+    "accepted_risk_reason",
+)
+
+
+def _merge_finding_state(previous: dict[str, Any], patch: dict[str, Any], actor: str) -> dict[str, Any]:
+    """Apply a triage patch onto the previous finding state.
+
+    Only the whitelisted remediation fields are writable; everything else in the
+    request body is ignored so a client cannot inject arbitrary keys.
+    """
+    defaults: dict[str, Any] = {field: None for field in FINDING_STATE_FIELDS}
+    defaults["status"] = "open"
+    return {
+        **defaults,
+        **{key: value for key, value in previous.items() if key in defaults},
+        **{key: value for key, value in patch.items() if key in defaults},
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+        "updated_by": actor,
+    }
 
 
 @runtime_checkable
@@ -125,7 +155,7 @@ class JobStore(Protocol):
 
 
 class PersistentJobStore:
-    """JSON-backed scan job store. Backward-compatible name for JsonJobStore."""
+    """JSON-file scan job store, used when VULNORAIQ_JOB_STORE_BACKEND=json."""
 
     def __init__(self, path: str | Path = "reports/output/webui/jobs.json") -> None:
         self.path = Path(path)
@@ -171,10 +201,56 @@ class PersistentJobStore:
         return list(job.summary.get("findings") or []) if job else []
 
     def update_finding(self, scan_id: str, finding_id: str, patch: dict[str, Any], actor: str) -> dict[str, Any] | None:
-        return None
+        with self._lock:
+            jobs = self._load_all()
+            job = jobs.get(scan_id)
+            if not job:
+                return None
+            findings = list(job.summary.get("findings") or [])
+            index = next(
+                (
+                    i
+                    for i, finding in enumerate(findings)
+                    if str(finding.get("id") or finding.get("owasp_id")) == finding_id
+                ),
+                None,
+            )
+            if index is None:
+                return None
+            previous = dict(findings[index].get("remediation_state") or {"status": "open"})
+            new_state = _merge_finding_state(previous, patch, actor)
+            findings[index] = {
+                **findings[index],
+                "id": finding_id,
+                "remediation_state": new_state,
+                "status": new_state["status"],
+            }
+            job.summary["findings"] = findings
+            history = job.summary.setdefault("finding_history", [])
+            history.append(
+                {
+                    "scan_id": scan_id,
+                    "finding_id": finding_id,
+                    "previous_state": previous,
+                    "new_state": new_state,
+                    "actor": actor,
+                    "timestamp": new_state["updated_at"],
+                    "note": str(patch.get("note") or patch.get("remediation_note") or "")[:500],
+                }
+            )
+            jobs[scan_id] = job
+            self._save_all(jobs)
+            return new_state
 
     def finding_history(self, scan_id: str, finding_id: str) -> builtins.list[dict[str, Any]]:
-        return []
+        job = self.get(scan_id)
+        if not job:
+            return []
+        return [
+            entry
+            for entry in (job.summary.get("finding_history") or [])
+            if entry.get("finding_id") == finding_id
+        ]
 
     def _load_all(self) -> dict[str, PersistedScanJob]:
         if not self.path.exists():
@@ -351,8 +427,10 @@ class SqliteJobStore:
                 job.id,
             ),
         )
-        self._conn.execute("DELETE FROM events WHERE job_id = ?", (job.id,))
-        for ev in job.events:
+        stored = self._conn.execute(
+            "SELECT COUNT(*) FROM events WHERE job_id = ?", (job.id,)
+        ).fetchone()[0]
+        for ev in job.events[stored:]:
             self._insert_event(job.id, ev)
         self._conn.commit()
 
@@ -432,24 +510,11 @@ class SqliteJobStore:
             "SELECT * FROM finding_states WHERE scan_id=? AND finding_id=?", (scan_id, finding_id)
         ).fetchone()
         previous = dict(prev) if prev else {"status": "open"}
-        defaults = {
-            "status": "open",
-            "severity": None,
-            "triage_state": None,
-            "owner": None,
-            "remediation_note": None,
-            "due_date": None,
-            "false_positive_reason": None,
-            "accepted_risk_reason": None,
-        }
         new = {
-            **defaults,
-            **previous,
-            **{k: v for k, v in patch.items() if k in defaults},
+            **_merge_finding_state(previous, patch, actor),
             "scan_id": scan_id,
             "finding_id": finding_id,
             "updated_at": now,
-            "updated_by": actor,
         }
         self._conn.execute(
             """INSERT OR REPLACE INTO finding_states (scan_id,finding_id,status,severity,triage_state,owner,remediation_note,due_date,false_positive_reason,accepted_risk_reason,updated_at,updated_by) VALUES (:scan_id,:finding_id,:status,:severity,:triage_state,:owner,:remediation_note,:due_date,:false_positive_reason,:accepted_risk_reason,:updated_at,:updated_by)""",

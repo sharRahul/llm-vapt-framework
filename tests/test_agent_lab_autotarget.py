@@ -13,7 +13,8 @@ import socket
 
 import pytest
 
-from webui import agent_lab
+from webui import agent_analysis, agent_lab
+from webui.docker_cli import DockerCommandError
 
 AIRA_SOURCE = '''
 # FILE: app.py
@@ -61,7 +62,7 @@ def chat(body: dict):
 
 
 def test_detect_endpoints_recovers_aira_get_query_text_contract():
-    endpoints = agent_lab._detect_endpoints(AIRA_SOURCE)
+    endpoints = agent_analysis.detect_endpoints(AIRA_SOURCE)
     by_path = {e["path"]: e for e in endpoints}
     get = by_path["/get"]
     assert get["method"] == "GET"
@@ -71,7 +72,7 @@ def test_detect_endpoints_recovers_aira_get_query_text_contract():
 
 
 def test_detect_endpoints_recovers_fastapi_post_json_contract():
-    endpoints = agent_lab._detect_endpoints(FASTAPI_SOURCE)
+    endpoints = agent_analysis.detect_endpoints(FASTAPI_SOURCE)
     chat = {e["path"]: e for e in endpoints}["/chat"]
     assert chat["method"] == "POST"
     assert chat["param_style"] == "json"
@@ -81,20 +82,21 @@ def test_detect_endpoints_recovers_fastapi_post_json_contract():
 
 
 def test_select_inference_endpoint_skips_health_and_root_for_aira():
-    endpoints = agent_lab._detect_endpoints(AIRA_SOURCE)
-    selected = agent_lab.select_inference_endpoint(endpoints)
+    endpoints = agent_analysis.detect_endpoints(AIRA_SOURCE)
+    selected = agent_analysis.select_inference_endpoint(endpoints)
     assert selected is not None
     assert selected["path"] == "/get"
 
 
 def test_select_inference_endpoint_prefers_chat_over_infra():
-    endpoints = agent_lab._detect_endpoints(FASTAPI_SOURCE)
-    selected = agent_lab.select_inference_endpoint(endpoints)
+    endpoints = agent_analysis.detect_endpoints(FASTAPI_SOURCE)
+    selected = agent_analysis.select_inference_endpoint(endpoints)
+    assert selected is not None
     assert selected["path"] == "/chat"
 
 
 def test_select_inference_endpoint_none_for_empty():
-    assert agent_lab.select_inference_endpoint([]) is None
+    assert agent_analysis.select_inference_endpoint([]) is None
 
 
 def test_analyze_exposes_selected_endpoint(tmp_path, monkeypatch):
@@ -126,7 +128,7 @@ def test_detect_ports_reads_flask_run_and_dockerfile_expose(tmp_path):
     )
     (proj / "Dockerfile").write_text("FROM python:3.11-slim\nEXPOSE 5000\nEXPOSE 7000\n", encoding="utf-8")
     text = (proj / "app.py").read_text(encoding="utf-8")
-    ports = agent_lab._detect_ports(proj, text)
+    ports = agent_analysis.detect_ports(proj, text)
     assert ports[0] == 5000
     assert 7000 in ports
     assert 8000 not in ports
@@ -239,8 +241,8 @@ def test_register_targets_chat_completions_unchanged():
 
 
 def test_resolve_contract_prefers_explicit_override():
-    info = {"endpoints": agent_lab._detect_endpoints(AIRA_SOURCE)}
-    contract = agent_lab._resolve_endpoint_contract(
+    info = {"endpoints": agent_analysis.detect_endpoints(AIRA_SOURCE)}
+    contract = agent_analysis.resolve_endpoint_contract(
         info,
         {"method": "post", "endpoint_path": "/ask", "response_extraction_path": "answer"},
         "http_json",
@@ -252,8 +254,8 @@ def test_resolve_contract_prefers_explicit_override():
 
 
 def test_resolve_contract_uses_detected_endpoint_by_default():
-    info = {"endpoints": agent_lab._detect_endpoints(AIRA_SOURCE)}
-    contract = agent_lab._resolve_endpoint_contract(info, {}, "http_json")
+    info = {"endpoints": agent_analysis.detect_endpoints(AIRA_SOURCE)}
+    contract = agent_analysis.resolve_endpoint_contract(info, {}, "http_json")
     assert contract["path"] == "/get"
     assert contract["method"] == "GET"
     assert contract["param_key"] == "msg"
@@ -327,9 +329,9 @@ def test_http_responds_false_for_open_socket_that_never_speaks_http():
 
 def test_container_run_state_unknown_for_missing_container(monkeypatch):
     def fake_docker(args):
-        raise RuntimeError("No such object")
+        raise DockerCommandError("No such object")
 
-    monkeypatch.setattr(agent_lab, "_run_docker", fake_docker)
+    monkeypatch.setattr(agent_lab, "run_docker", fake_docker)
     assert agent_lab._container_run_state("does-not-exist") == ("", False)
 
 
@@ -344,7 +346,7 @@ def test_external_deploy_registers_target_without_docker(tmp_path, monkeypatch):
     def fail_docker(args):  # deploying external must never touch docker
         raise AssertionError(f"docker should not be called: {args}")
 
-    monkeypatch.setattr(agent_lab, "_run_docker", fail_docker)
+    monkeypatch.setattr(agent_lab, "run_docker", fail_docker)
 
     save, saved = _capture_save_fn()
     payload = {

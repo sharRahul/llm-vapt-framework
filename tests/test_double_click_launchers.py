@@ -59,8 +59,8 @@ def test_bootstrap_remains_available_for_python_docker_lab_flow() -> None:
     assert "docker compose logs vulnoraiq-web" in bootstrap
 
 
-def test_run_mode_plan_documents_launcher_flow() -> None:
-    plan = (ROOT / "docs" / "RUN_MODES_DESKTOP_AND_DOCKER_LAB.md").read_text(encoding="utf-8")
+def test_run_mode_guide_documents_launcher_flow() -> None:
+    plan = (ROOT / "docs" / "guides" / "desktop-mode.md").read_text(encoding="utf-8")
 
     assert "Desktop Mode" in plan
     assert "Docker Lab Mode" in plan

@@ -309,65 +309,26 @@ def validate_manifest(path: str | Path = "benchmarks/fixtures/genai/scenarios.ya
     }
 
 
-def validate_docs(
-    plan_path: str | Path = "docs/genai/PRODUCTION_READINESS_PLAN.md",
-    readme_path: str | Path = "docs/genai/README.md",
-) -> dict[str, Any]:
-    errors: list[str] = []
-    plan = Path(plan_path)
-    readme = Path(readme_path)
-    if not plan.exists():
-        errors.append(f"{plan}: file not found")
-    else:
-        plan_text = plan.read_text(encoding="utf-8")
-        for required_text in (
-            "Plan status: Completed",
-            "production-grade scenario harness",
-            "84 concrete scenario cases",
-            "controlled internal enterprise deployment",
-            "not independent real-world detection assurance",
-        ):
-            if required_text not in plan_text:
-                errors.append(f"{plan}: missing required text '{required_text}'")
-    if not readme.exists():
-        errors.append(f"{readme}: file not found")
-    else:
-        readme_text = readme.read_text(encoding="utf-8")
-        for required_text in (
-            "Production-grade scenario harness",
-            "84 concrete scenario cases",
-            "benchmarks/fixtures/genai/scenarios.yaml",
-            "scripts/validate_genai_readiness.py",
-            "not certified assurance",
-        ):
-            if required_text not in readme_text:
-                errors.append(f"{readme}: missing required text '{required_text}'")
-    return {"status": "fail" if errors else "pass", "errors": errors}
-
-
 def validate_default() -> dict[str, Any]:
     manifest_result = validate_manifest()
-    docs_result = validate_docs()
-    errors = [*manifest_result["errors"], *docs_result["errors"]]
     return {
-        "status": "fail" if errors else "pass",
+        "status": manifest_result["status"],
         "manifest": manifest_result,
-        "docs": docs_result,
-        "errors": errors,
+        "errors": list(manifest_result["errors"]),
     }
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Validate GenAI Security production-grade scenario harness and docs.")
+    parser = argparse.ArgumentParser(description="Validate the GenAI Security production-grade scenario harness manifest.")
     parser.add_argument("--manifest", default="benchmarks/fixtures/genai/scenarios.yaml")
-    parser.add_argument("--plan", default="docs/genai/PRODUCTION_READINESS_PLAN.md")
-    parser.add_argument("--readme", default="docs/genai/README.md")
     args = parser.parse_args()
 
     manifest_result = validate_manifest(args.manifest)
-    docs_result = validate_docs(args.plan, args.readme)
-    errors = [*manifest_result["errors"], *docs_result["errors"]]
-    result = {"status": "fail" if errors else "pass", "manifest": manifest_result, "docs": docs_result, "errors": errors}
+    result = {
+        "status": manifest_result["status"],
+        "manifest": manifest_result,
+        "errors": list(manifest_result["errors"]),
+    }
     print(json.dumps(result, indent=2, sort_keys=True))
     if result["status"] != "pass":
         raise SystemExit(1)

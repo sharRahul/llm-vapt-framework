@@ -46,7 +46,7 @@ EXPECTED_CLI_ENTRY_POINTS = [
 ]
 EXPECTED_LICENSE = "Apache-2.0"
 EXPECTED_LICENSE_FILE = Path("LICENSE")
-EXPECTED_MITRE_ATLAS_DOC = Path("docs/MITRE_ATLAS_AI_MATRIX.md")
+EXPECTED_MITRE_ATLAS_DOC = Path("docs/reference/mitre-atlas-matrix.md")
 EXPECTED_THIRD_PARTY_NOTICES = Path("THIRD_PARTY_NOTICES.md")
 EXPECTED_DASHBOARD_EXAMPLE = None  # Docker-first docs intentionally avoid stale screenshot artifacts.
 EXPECTED_FUNCTIONAL_RUNNER = Path("scripts/run_functional_test.py")
@@ -119,10 +119,14 @@ class PackageMetadataValidator:
             if command not in pyproject:
                 errors.append(f"Missing CLI entry point: {command}")
         readme = Path("README.md").read_text(encoding="utf-8")
-        readme_lower = readme.lower()
-        if "self-hosted" not in readme_lower or "laptop/server" not in readme_lower:
-            warnings.append("README self-hosted laptop/server maturity wording was not found")
-        if "certified VAPT-grade assurance" not in readme:
+        # Collapse whitespace so a wrapped sentence still matches the claim.
+        readme_flat = " ".join(readme.split())
+        readme_lower = readme_flat.lower()
+        if "self-hosted" not in readme_lower:
+            warnings.append("README does not state the self-hosted deployment scope")
+        if not ("desktop mode" in readme_lower and "lab mode" in readme_lower):
+            warnings.append("README does not describe both supported run modes")
+        if "certified VAPT-grade assurance" not in readme_flat:
             warnings.append("README assurance limitation wording was not found")
         if "docs/assets/vulnoraiq-webui-home.png" in readme:
             errors.append("README must not reference removed stale Web UI screenshot artifacts")

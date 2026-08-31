@@ -4,27 +4,22 @@ from pathlib import Path
 
 import pytest
 
-from webui.hosted_server import _save_runtime_target, validate_scan_request
+from core.runtime_targets import save as save_runtime_target
+from webui.hosted_server import validate_scan_request
 
 
 def test_validate_scan_request_requires_explicit_target() -> None:
     with pytest.raises(ValueError, match="target is required"):
         validate_scan_request({})
-
-
 def test_validate_scan_request_accepts_explicit_test_fixture_target() -> None:
     target, profile, authorised = validate_scan_request({"target": "demo", "profile": "baseline", "authorised": True})
 
     assert target == "demo"
     assert profile == "baseline"
     assert authorised is True
-
-
 def test_validate_scan_request_rejects_unknown_target() -> None:
     with pytest.raises(ValueError):
         validate_scan_request({"target": "missing", "profile": "baseline"})
-
-
 def test_run_scan_job_generates_webui_outputs(tmp_path, monkeypatch) -> None:
     from webui.hosted_server import run_scan_job
 
@@ -44,20 +39,16 @@ def test_run_scan_job_generates_webui_outputs(tmp_path, monkeypatch) -> None:
     assert completed.summary["finding_count"] >= 1
     assert set(completed.outputs) == {"markdown", "json", "sarif", "dashboard_markdown", "dashboard_html"}
     assert all(Path(path).exists() for path in completed.outputs.values())
-
-
 def test_save_runtime_target_rejects_invalid_id(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("VULNORAIQ_RUNTIME_TARGETS_PATH", str(tmp_path / "runtime_targets.yaml"))
 
     with pytest.raises(ValueError, match="target id"):
-        _save_runtime_target("../bad", {"name": "Bad", "type": "http_json", "base_url": "http://127.0.0.1:8080"})
-
-
+        save_runtime_target("../bad", {"name": "Bad", "type": "http_json", "base_url": "http://127.0.0.1:8080"})
 def test_save_runtime_target_rejects_invalid_target_config(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("VULNORAIQ_RUNTIME_TARGETS_PATH", str(tmp_path / "runtime_targets.yaml"))
 
     with pytest.raises(ValueError, match="model is required"):
-        _save_runtime_target(
+        save_runtime_target(
             "local_agent",
             {
                 "name": "Local Agent",

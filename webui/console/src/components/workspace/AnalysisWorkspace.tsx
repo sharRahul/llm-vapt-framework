@@ -14,12 +14,15 @@ import { Button } from "@/components/ui/button";
 import { VulnerableCodeBlock } from "./VulnerableCodeBlock";
 import { RemediatedCodeBlock } from "./RemediatedCodeBlock";
 import { FindingMarkdownReader } from "./FindingMarkdownReader";
+import { TriageControl } from "./TriageControl";
+import { apiPostOptional } from "@/lib/api";
 
 interface AnalysisWorkspaceProps {
   finding: Finding;
   asset?: Asset;
   history?: FindingHistoryEntry[];
   onMarkForReview: () => void;
+  onChangeStatus?: (patch: Record<string, string>) => void;
 }
 
 function parseState(value: FindingHistoryEntry["new_state"]): Record<string, unknown> {
@@ -39,6 +42,7 @@ export function AnalysisWorkspace({
   asset,
   history = [],
   onMarkForReview,
+  onChangeStatus,
 }: AnalysisWorkspaceProps) {
   const [split, setSplit] = useState(true);
   const [aiExplanation, setAiExplanation] = useState<string | null>(null);
@@ -51,25 +55,16 @@ export function AnalysisWorkspace({
     setAiExplanation(null);
     (async () => {
       try {
-        const tokenRes = await fetch("/api/csrf-token", { credentials: "same-origin" });
-        if (!tokenRes.ok) return;
-        const { csrf_token } = (await tokenRes.json()) as { csrf_token: string };
-        const res = await fetch("/api/assistant/explain", {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf_token },
-          body: JSON.stringify({
-            finding: {
-              title: finding.title,
-              severity: finding.severity,
-              status: finding.status,
-              affected_component: finding.affectedPath,
-              recommendation: finding.remediation?.summary,
-            },
-          }),
+        const data = await apiPostOptional<{ explanation?: string; backend?: string }>("/api/assistant/explain", {
+          finding: {
+            title: finding.title,
+            severity: finding.severity,
+            status: finding.status,
+            affected_component: finding.affectedPath,
+            recommendation: finding.remediation?.summary,
+          },
         });
-        if (!res.ok || cancelled) return;
-        const data = (await res.json()) as { explanation?: string; backend?: string };
+        if (!data || cancelled) return;
         if (!cancelled && data.explanation && data.backend?.startsWith("local-model")) {
           setAiExplanation(data.explanation);
         }
@@ -98,15 +93,17 @@ export function AnalysisWorkspace({
           </span>
         </div>
 
-        <h1 className="mt-2.5 font-sans text-lg font-extrabold leading-tight tracking-tight text-foreground">
+        <h2 className="mt-2.5 font-sans text-lg font-extrabold leading-tight tracking-tight text-foreground">
           {finding.title}
-        </h1>
+        </h2>
 
         <p className="mt-1 flex items-center gap-1.5 font-mono text-xs text-muted-foreground">
           <FileCode2 className="size-3.5" />
           {asset ? `${asset.name} · ` : ""}
           {finding.affectedPath}
         </p>
+
+        {onChangeStatus ? <TriageControl status={finding.status} onChange={onChangeStatus} /> : null}
 
         <div className="mt-3 flex gap-2 rounded-md border border-border bg-[color-mix(in_srgb,var(--accent-slate)_8%,transparent)] p-3">
           <Sparkles className="mt-0.5 size-4 shrink-0 text-[var(--accent-slate)]" />

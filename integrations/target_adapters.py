@@ -4,8 +4,11 @@ import ipaddress
 import json
 import os
 import re
+import socket
 import time
 from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 from urllib.parse import urljoin, urlparse
 
@@ -136,37 +139,148 @@ def validate_target_definition(name: str, raw: dict[str, Any]) -> dict[str, Any]
     return cfg
 
 
+def _safety_profiles_path() -> str:
+    return os.getenv("VULNORAIQ_SAFETY_PROFILE_PATH") or str(
+        Path(os.getenv("VULNORAIQ_CONFIG_DIR", "config")) / "safety_profiles.yaml"
+    )
+
+
 def _load_safety_profile(name: str) -> dict[str, Any]:
-    path = os.getenv("VULNORAIQ_SAFETY_PROFILE_PATH") or str(os.getenv("VULNORAIQ_CONFIG_DIR", "config") + "/safety_profiles.yaml")
+    """Return one named safety profile, cached per (path, mtime).
+
+    The profile is consulted several times per outbound request; re-reading and
+    re-parsing the YAML each time was both wasteful and leaked file handles.
+    """
+    path = _safety_profiles_path()
     try:
-        data = yaml.safe_load(open(path, encoding="utf-8")) or {}
-    except FileNotFoundError:
+        stamp = os.stat(path).st_mtime_ns
+    except OSError:
         return {}
-    return (data.get("safety_profiles") or {}).get(name, {})
+    profiles = _safety_profiles_cached(path, stamp)
+    return profiles.get(name, {})
+
+
+@lru_cache(maxsize=8)
+def _safety_profiles_cached(path: str, _stamp: int) -> dict[str, dict[str, Any]]:
+    try:
+        with open(path, encoding="utf-8") as handle:
+            data = yaml.safe_load(handle) or {}
+    except OSError:
+        return {}
+    profiles = data.get("safety_profiles") or {}
+    return profiles if isinstance(profiles, dict) else {}
+
+
+def _environment_allowed_hosts() -> set[str]:
+    raw = os.getenv("VULNORAIQ_ALLOWED_TARGET_HOSTS", "")
+    return {item.strip().lower() for item in raw.split(",") if item.strip()}
+
+
+def _host_matches(hostname: str, allowed: str) -> bool:
+    if allowed.startswith("*."):
+        return hostname.endswith(allowed[1:]) and hostname != allowed[2:]
+    return hostname == allowed
+
+
+def _enforce_environment_allowlist(hostname: str) -> None:
+    """Apply the deployment-wide target host allowlist, when one is configured.
+
+    ``VULNORAIQ_ALLOWED_TARGET_HOSTS`` is an operator-level guard rail that sits
+    above per-target safety profiles: nothing outside it is ever contacted.
+    Entries may be exact hosts or ``*.suffix`` wildcards.
+    """
+    allowed = _environment_allowed_hosts()
+    if allowed and not any(_host_matches(hostname, item) for item in allowed):
+        raise ValueError(f"target host '{hostname}' is not in VULNORAIQ_ALLOWED_TARGET_HOSTS")
+
+
+def _target_allowlist(cfg: dict[str, Any], profile: dict[str, Any]) -> set[str]:
+    """Collect the host allowlist declared by the safety profile and the target.
+
+    Three places may narrow scope and all of them are honoured:
+    ``safety_profile.allowed_hosts``, ``target.allowed_hosts``, and the
+    ``target.allowed_host_pattern`` shorthand (``"a.example|*.lab.example"``).
+    Declaring an allowlist *is* the operator's explicit scope statement, so a
+    matching host does not additionally have to resolve to a private address.
+    """
+    allowed: set[str] = set()
+    for source in (profile.get("allowed_hosts"), cfg.get("allowed_hosts")):
+        if isinstance(source, str):
+            source = [source]
+        for item in source or []:
+            text = str(item).strip().lower()
+            if text:
+                allowed.add(text)
+    for item in str(cfg.get("allowed_host_pattern") or "").split("|"):
+        text = item.strip().lower()
+        if text:
+            allowed.add(text)
+    return allowed
+
+
+def _resolved_addresses(host: str) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
+    """Resolve ``host`` to every address it currently maps to.
+
+    A literal address resolves to itself. An empty list means the name could not
+    be resolved, which callers must treat as "not provably internal".
+    """
+    try:
+        return [ipaddress.ip_address(host)]
+    except ValueError:
+        pass
+    try:
+        infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+    except socket.gaierror:
+        return []
+    addresses = []
+    for info in infos:
+        try:
+            addresses.append(ipaddress.ip_address(info[4][0]))
+        except ValueError:
+            continue
+    return addresses
+
+
+def _is_internal_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return bool(address.is_loopback or address.is_private or address.is_link_local)
 
 
 def validate_url(cfg: dict[str, Any]) -> str:
+    """Validate and return the absolute request URL for a target configuration.
+
+    Scope control: unless the target or its safety profile opts into external
+    network access, every address the host resolves to must be loopback,
+    private, or link-local. Resolving instead of pattern-matching the hostname
+    is what lets Docker Lab Mode reach an agent by its container DNS name while
+    still refusing a public name that merely *looks* internal (``x.internal``).
+    """
     url = urljoin(str(cfg.get("base_url", "")).rstrip("/") + "/", str(cfg.get("endpoint_path", "/")).lstrip("/"))
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ValueError("invalid URL: only http(s) targets with host are supported")
+    if parsed.username or parsed.password:
+        raise ValueError("target URL must not embed credentials; use token_env_var instead")
+    _enforce_environment_allowlist(parsed.hostname.lower())
     profile = _load_safety_profile(str(cfg.get("safety_profile", "")))
     allowed_schemes = set(profile.get("allowed_schemes") or [])
     if allowed_schemes and parsed.scheme not in allowed_schemes:
         raise ValueError(f"scheme '{parsed.scheme}' is blocked by safety profile")
-    host = parsed.hostname
-    allowed_hosts = set(profile.get("allowed_hosts") or [])
-    if allowed_hosts and host not in allowed_hosts:
-        raise ValueError(f"host '{host}' is blocked by safety profile allowlist")
+    host = parsed.hostname.lower()
+    allowed_hosts = _target_allowlist(cfg, profile)
+    if allowed_hosts and not any(_host_matches(host, item) for item in allowed_hosts):
+        raise ValueError(f"host '{host}' is blocked by the configured target allowlist")
     allow_external = bool(cfg.get("allow_external", False) or profile.get("allow_external_network", False))
     if not allow_external and not allowed_hosts:
-        try:
-            ip = ipaddress.ip_address(host)
-            allowed = ip.is_loopback or ip.is_private or ip.is_link_local
-        except ValueError:
-            allowed = host in {"localhost"} or host.endswith(".local") or host.endswith(".internal")
-        if not allowed:
-            raise ValueError("target host is not loopback/internal; external targets are blocked by default")
+        addresses = _resolved_addresses(host)
+        if not addresses:
+            raise ValueError(
+                f"target host '{host}' could not be resolved; external targets are blocked by default"
+            )
+        if not all(_is_internal_address(address) for address in addresses):
+            raise ValueError(
+                f"target host '{host}' resolves outside loopback/private networks; "
+                "external targets are blocked by default"
+            )
     return url
 
 
@@ -255,19 +369,6 @@ def connectivity_check(name: str, cfg: dict[str, Any]) -> dict[str, Any]:
     result = invoke_target(name, cfg, prompt)
     return {"target_id": name, "ready": result.ok and bool(result.answer), "normalized_response": result.answer[:500], "status_code": result.status_code, "error": result.error, "request": result.request, "response_preview": redact(result.response.get("body")) if result.response else None}
 
-class LLMTargetAdapter(RealTargetClient):
-    """Minimal OpenAI-compatible LLM target adapter."""
-
-class RAGTargetAdapter(RealTargetClient):
-    """Minimal RAG endpoint target adapter."""
-
-class AgentTargetAdapter(RealTargetClient):
-    """Minimal agent framework endpoint target adapter."""
-
-class GatewayTargetAdapter(RealTargetClient):
-    """Minimal provider gateway target adapter."""
-
-
 def validate_real_environment_config(name: str, raw: dict[str, Any]) -> dict[str, Any]:
     cfg = normalize_target_config(name, raw)
     if not cfg.get("explicit_authorisation") and not cfg.get("authorised"):
@@ -275,7 +376,7 @@ def validate_real_environment_config(name: str, raw: dict[str, Any]) -> dict[str
     if cfg.get("dry_run", True) is not True and not cfg.get("allow_live_requests"):
         raise ValueError("dry-run is the default; set allow_live_requests only for approved internal validation")
     validate_url(cfg)
-    if not cfg.get("allowed_hosts") and not cfg.get("allowed_host_pattern") and not _load_safety_profile(str(cfg.get("safety_profile", ""))).get("allowed_hosts"):
+    if not _target_allowlist(cfg, _load_safety_profile(str(cfg.get("safety_profile", "")))):
         raise ValueError("target allow-list or allowed_host_pattern is required")
     if not cfg.get("rate_limit"):
         raise ValueError("rate_limit is required")

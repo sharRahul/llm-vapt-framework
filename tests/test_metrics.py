@@ -1,43 +1,87 @@
 from __future__ import annotations
 
-from webui.hosted_server import _get_metrics_snapshot, _inc_metric
+import threading
+
+from webui.web_security import MetricsRegistry, metrics
 
 
 def test_metrics_counters_increment() -> None:
-    _inc_metric("test_counter")
-    snapshot = _get_metrics_snapshot()
-    assert snapshot.get("test_counter", 0) >= 1
+    registry = MetricsRegistry()
+    registry.increment("test_counter")
+    registry.increment("test_counter")
+
+    assert registry.snapshot()["test_counter"] == 2
 
 
-def test_metrics_contains_expected_keys() -> None:
-    snapshot = _get_metrics_snapshot()
-    expected = ["active_scans"]
-    for key in expected:
-        assert key in snapshot
+def test_metrics_snapshot_is_a_copy() -> None:
+    registry = MetricsRegistry()
+    registry.increment("counter")
+    snapshot = registry.snapshot()
+    snapshot["counter"] = 999
+
+    assert registry.snapshot()["counter"] == 1
 
 
-def test_metrics_active_scans_non_negative() -> None:
-    snapshot = _get_metrics_snapshot()
-    assert snapshot.get("active_scans", 0) >= 0
+def test_metrics_exposition_includes_scan_gauges() -> None:
+    """The /metrics body must carry scan concurrency, not just counters."""
+    from webui import hosted_server
+
+    metrics.increment("scans_created")
+    body = _render_metrics(hosted_server)
+
+    assert "vulnoraiq_active_scans" in body
+    assert "vulnoraiq_queued_scans" in body
+    assert "vulnoraiq_scans_created_total" in body
 
 
-def test_metrics_thread_safe() -> None:
-    import threading
+def _render_metrics(hosted_server) -> str:
+    captured: list[bytes] = []
+
+    class Recorder(hosted_server.HostedWebUiHandler):
+        def __init__(self) -> None:  # noqa: D107 - bypasses socket setup on purpose
+            pass
+
+        def send_response(self, *args, **kwargs) -> None:
+            pass
+
+        def send_header(self, *args, **kwargs) -> None:
+            pass
+
+        def end_headers(self) -> None:
+            pass
+
+        def _client_ip(self) -> str:
+            return "127.0.0.1"
+
+        @property
+        def wfile(self):
+            class Sink:
+                @staticmethod
+                def write(data: bytes) -> None:
+                    captured.append(data)
+
+            return Sink()
+
+    Recorder()._serve_metrics()
+    return b"".join(captured).decode("utf-8")
+
+
+def test_metrics_registry_is_thread_safe() -> None:
+    registry = MetricsRegistry()
     errors: list[Exception] = []
 
     def increment() -> None:
         try:
             for _ in range(100):
-                _inc_metric("thread_test")
-        except Exception as exc:
+                registry.increment("concurrent")
+        except Exception as exc:  # pragma: no cover - only fires on a real race
             errors.append(exc)
 
     threads = [threading.Thread(target=increment) for _ in range(10)]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
 
-    assert len(errors) == 0
-    snapshot = _get_metrics_snapshot()
-    assert snapshot.get("thread_test", 0) >= 900  # some might not finish
+    assert not errors
+    assert registry.snapshot()["concurrent"] == 1000

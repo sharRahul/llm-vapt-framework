@@ -26,7 +26,6 @@ module.exports = defineConfig({
       ...process.env,
       VULNORAIQ_ALLOW_TEST_FIXTURE_TARGETS: 'true',
       VULNORAIQ_TARGET_CONFIG: 'targets.test.yaml',
-      VULNORAIQ_WEBUI_TEST_ADMIN: 'true',
       VULNORAIQ_AUTH_ENABLED: 'false',
       VULNORAIQ_WEB_OUTPUT_ROOT: 'reports/output/webui-hosted-playwright',
       VULNORAIQ_JOB_STORE_PATH: 'reports/output/webui-hosted-playwright/jobs.db',

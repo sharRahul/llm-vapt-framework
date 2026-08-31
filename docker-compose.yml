@@ -5,11 +5,8 @@ services:
     container_name: vulnoraiq-web
     restart: unless-stopped
     init: true
-    read_only: false
     ports:
       - "127.0.0.1:8787:8787"
-    env_file:
-      - .env.docker.example
     environment:
       VULNORAIQ_RUN_MODE: docker_lab
       VULNORAIQ_HOST: 0.0.0.0
@@ -20,13 +17,15 @@ services:
       VULNORAIQ_WEB_OUTPUT_ROOT: /data/reports
       VULNORAIQ_RUNTIME_TARGETS_PATH: /data/reports/runtime_targets.yaml
       VULNORAIQ_EVIDENCE_DIR: /data/evidence
-      VULNORAIQ_AUDIT_DIR: /data/audit
       VULNORAIQ_AUTH_MODE: local_admin
       VULNORAIQ_LOCAL_ADMIN_BIND_OK: "true"
       VULNORAIQ_AGENT_LAB_ROOT: /data/agent_lab
       VULNORAIQ_AGENT_LAB_PROJECTS_ROOT: /data/agent_lab/projects
       VULNORAIQ_AGENT_LAB_ALLOWED_GIT_HOSTS: github.com,gitlab.com,bitbucket.org
       VULNORAIQ_MAX_REQUEST_BODY: "52428800"
+      VULNORAIQ_MAX_CONCURRENT_SCANS: "2"
+      VULNORAIQ_SCAN_QUEUE_LIMIT: "10"
+      VULNORAIQ_RATE_LIMIT_MAX: "120"
     volumes:
       - vulnoraiq_data:/data
       - ./config:/app/config:ro
@@ -53,8 +52,6 @@ services:
     build: .
     image: vulnoraiq:docker-lab
     profiles: ["test"]
-    env_file:
-      - .env.docker.example
     environment:
       VULNORAIQ_CONFIG_DIR: /app/config
       VULNORAIQ_TARGET_CONFIG: targets.docker.yaml

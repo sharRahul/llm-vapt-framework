@@ -5,16 +5,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_readme_lists_prerequisites_before_quick_start() -> None:
+def test_readme_documents_installation_requirements() -> None:
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
 
-    assert readme.index("## Prerequisites") < readme.index("## Quick start")
+    assert "## Installation" in readme
     for phrase in [
         "Docker Engine or Docker Desktop",
-        "Docker Compose v2",
-        "Python 3.10 or newer",
+        "Compose v2",
+        "Python 3.10+",
         "modern browser",
-        "Node.js 20 or newer",
+        "Node.js 20+",
     ]:
         assert phrase in readme
 

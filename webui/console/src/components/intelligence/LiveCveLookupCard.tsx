@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { DatabaseZap, ExternalLink, Loader2, ShieldAlert } from "lucide-react";
 import type { Finding } from "@/types";
+import { apiPostOptional } from "@/lib/api";
 
 interface CveMatch {
   id: string;
@@ -30,24 +31,14 @@ export function LiveCveLookupCard({ finding }: { finding: Finding }) {
     setLoading(true);
     (async () => {
       try {
-        const tokenRes = await fetch("/api/csrf-token", { credentials: "same-origin" });
-        if (!tokenRes.ok) return;
-        const { csrf_token } = (await tokenRes.json()) as { csrf_token: string };
-        const res = await fetch("/api/findings/cve", {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf_token },
-          body: JSON.stringify({
-            finding: {
-              title: finding.title,
-              category: finding.cwe?.id,
-              affected_component: finding.affectedPath,
-            },
-          }),
+        const data = await apiPostOptional<CveLookupResult>("/api/findings/cve", {
+          finding: {
+            title: finding.title,
+            category: finding.cwe?.id,
+            affected_component: finding.affectedPath,
+          },
         });
-        if (!res.ok || cancelled) return;
-        const data = (await res.json()) as CveLookupResult;
-        if (!cancelled) setResult(data);
+        if (data && !cancelled) setResult(data);
       } catch {
         /* online lookup is optional */
       } finally {

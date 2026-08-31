@@ -29,8 +29,7 @@ classifiers = [
 ]
 dependencies = [
   "PyYAML>=6.0.1",
-  "requests>=2.31.0",
-  "rich>=13.7.0"
+  "requests>=2.31.0"
 ]
 
 [project.urls]
@@ -83,7 +82,7 @@ assistant-cuda = [
 
 [project.scripts]
 vulnoraiq = "scripts.run_scan:main"
-vulnoraiq-web = "webui.assistant_server:main"
+vulnoraiq-web = "webui.server:main"
 vulnoraiq-dashboard = "dashboards.generate_dashboard:main"
 vulnoraiq-diff = "reports.report_diff:main"
 vulnoraiq-package = "scripts.build_release_package:main"
@@ -116,8 +115,7 @@ testpaths = ["tests"]
 # basetemp is intentionally left to pytest's default (under the OS temp dir).
 # Pinning it inside the working tree left locked/ACL-corrupted dirs on Windows
 # that made later runs fail with PermissionError as if the product were broken.
-addopts = "-q --ignore=tests/test_scanner_authorisation.py"
-cache_dir = ".pytest_cache"
+addopts = "-q"
 
 [tool.ruff]
 target-version = "py310"
@@ -136,10 +134,19 @@ python_version = "3.10"
 warn_unused_ignores = true
 warn_redundant_casts = true
 ignore_missing_imports = true
-ignore_errors = true
 no_implicit_optional = true
 check_untyped_defs = true
-exclude = "reports/output|build|dist|docker|tests|projects|agent-lab/projects|scan-reports|\\.manual-test-work|\\.pytest_tmp|core/scanner.py|webui/auth.py|scripts/run_functional_test.py"
+exclude = '''(?x)(
+    ^reports/output/
+  | ^build/
+  | ^dist/
+  | ^docker/
+  | ^projects/
+  | ^agent-lab/
+  | ^scan-reports/
+  | ^model/
+  | ^\.
+)'''
 
 # numpy (pulled in only by the optional [assistant] extra) ships stubs that use
 # Python 3.12+ syntax; we target 3.10, so don't follow it.

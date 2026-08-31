@@ -1,4 +1,3 @@
-# mypy: ignore-errors
 """In-process small language model for the VulnoraIQ assistant.
 
 This is an optional, self-contained backend that runs a small instruction-tuned
@@ -31,6 +30,7 @@ import shutil
 import threading
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 DEFAULT_MODEL_REPO = os.getenv("VULNORAIQ_ASSISTANT_MODEL_REPO", "Qwen/Qwen2.5-0.5B-Instruct-GGUF")
 DEFAULT_MODEL_FILE = os.getenv("VULNORAIQ_ASSISTANT_MODEL_FILE", "qwen2.5-0.5b-instruct-q4_k_m.gguf")
@@ -87,7 +87,7 @@ def _register_nvidia_pip_runtime() -> None:
     to CPU. Add each component's ``bin`` directory before importing llama.cpp.
     """
     try:
-        import nvidia  # type: ignore
+        import nvidia
     except Exception:
         return
     for root in getattr(nvidia, "__path__", []):
@@ -137,7 +137,8 @@ class LocalAssistantModel:
     _instance_lock = threading.Lock()
 
     def __init__(self) -> None:
-        self._llm = None
+        # The concrete type is llama_cpp.Llama, which is an optional dependency.
+        self._llm: Any = None
         self._load_lock = threading.Lock()
         # A llama.cpp context holds mutable decode state and is NOT safe for
         # concurrent calls; overlapping requests crash with "llama_decode

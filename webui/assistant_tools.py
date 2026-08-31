@@ -44,7 +44,7 @@ def _host_is_public(host: str) -> bool:
     except OSError:
         return False
     for info in infos:
-        addr = info[4][0]
+        addr = str(info[4][0])
         try:
             ip = ipaddress.ip_address(addr.split("%")[0])
         except ValueError:

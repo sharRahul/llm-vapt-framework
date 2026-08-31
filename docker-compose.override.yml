@@ -1,5 +1,0 @@
-services:
-  vulnoraiq-web:
-    volumes:
-      - ./reports/docker-lab:/data/reports
-      - ./config:/app/config:ro
