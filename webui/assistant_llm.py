@@ -27,6 +27,7 @@ from __future__ import annotations
 import importlib.util
 import os
 import shutil
+import sys
 import threading
 import urllib.request
 from pathlib import Path
@@ -61,12 +62,14 @@ def cache_dir() -> Path:
 
 
 def _register_windows_dll_dir(path: Path) -> None:
-    if os.name != "nt" or not path.is_dir():
+    # os.add_dll_directory exists only on Windows; sys.platform narrows it for
+    # type checkers running on other platforms.
+    if sys.platform != "win32" or not path.is_dir():
         return
     resolved = str(path.resolve())
     try:
         handle = os.add_dll_directory(resolved)
-    except (AttributeError, OSError):
+    except OSError:
         handle = None
     if handle is not None:
         _DLL_DIRECTORIES.append(handle)

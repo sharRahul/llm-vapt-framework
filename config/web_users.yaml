@@ -1,44 +1,33 @@
-# Web UI authentication configuration.
+# Web console authentication (file-based fallback).
 #
-# Local Desktop Mode uses VULNORAIQ_AUTH_MODE=local_admin, which resolves
-# requests to the built-in local-admin principal. This is only for local,
-# single-user/admin operation and startup validation rejects it in production.
+# This file is only consulted when NO token environment variables are set, and
+# it is refused entirely when VULNORAIQ_ENV=production. Prefer environment
+# tokens everywhere:
 #
-# For production or shared internal server deployments, explicitly enable token
-# auth and provide environment tokens:
-#   VULNORAIQ_ENV=production
 #   VULNORAIQ_AUTH_MODE=token
 #   VULNORAIQ_ADMIN_TOKEN=<strong-random-token>
 #   VULNORAIQ_ANALYST_TOKEN=<analyst-token>
 #   VULNORAIQ_VIEWER_TOKEN=<viewer-token>
 #
-# VULNORAIQ_AUTH_ENABLED=false is kept only as a backward-compatible alias for
-# VULNORAIQ_AUTH_MODE=local_admin. New launchers should use VULNORAIQ_AUTH_MODE.
+# Local Desktop Mode needs none of this: VULNORAIQ_AUTH_MODE=local_admin
+# resolves the local user as the single administrator on a loopback bind.
 #
-# When env token vars are set, file-based users are ignored.
-# This file is used only as a fallback when no token env vars are present.
+# Roles and their permissions are defined in code (webui/auth.py) and are not
+# configurable here. Only `auth.header_name` and `users` are read.
 #
-# IMPORTANT: The token hashes in this file are example-only values.
-# Replace them with real SHA-256 hashes for any non-development deployment.
-# See config/web_users.example.yaml for a template.
+# To add a local development user, append an entry of the shape below. Never
+# commit a real token hash.
+#
+#   users:
+#     - username: alice
+#       role: admin          # admin | analyst | viewer
+#       status: active
+#       token_sha256: <sha256 of the bearer token>
+#
+# Generate a hash with:
+#   python -c "import hashlib,sys;print(hashlib.sha256(sys.argv[1].encode()).hexdigest())" <token>
 
 auth:
-  enabled: true
-  default_role: viewer
   header_name: X-VulnoraIQ-Token
+
 users: []
-roles:
-  viewer:
-    permissions:
-      - view_scans
-      - download_artifacts
-  analyst:
-    inherits:
-      - viewer
-    permissions: []
-  admin:
-    inherits:
-      - analyst
-    permissions:
-      - start_configured_scan
-      - manage_runtime

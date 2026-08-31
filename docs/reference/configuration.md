@@ -37,8 +37,8 @@ never rewritten by the running application:
 | `policies.yaml` | Policy gates evaluated against a completed scan, including the authorisation requirement. |
 | `policy_exceptions.yaml` | Recorded, justified exceptions to those policies. |
 | `safety_profiles.yaml` | Per-target limits: host allowlists, timeouts, payload counts, response size caps. |
-| `agent_templates.yaml` | Prebuilt agent images deployable from the Agents workspace. |
-| `agent_runtime.yaml`, `agent_runtimes.yaml` | Agent runtime manifests used by policy validation. |
+| `agent_templates.yaml` | Agent containers deployable from the Agents workspace, including the HTTP agent bridge shipped under `docker/agents/`. |
+| `agent_runtime.yaml` | Agent runtime manifest used by policy validation. |
 | `agent_execution_scenarios.yaml` | Scenarios for the agent execution harness. |
 | `approval_evidence.yaml` | Approval records required by assurance policies. |
 | `attack_profiles.yaml` | Assessment profile definitions. |
@@ -51,7 +51,7 @@ never rewritten by the running application:
 | `rag_corpus_manifest.yaml`, `rag_retrieval_scenarios.yaml` | RAG assessment corpus and scenarios. |
 | `report_branding.yaml` | Report header/branding text. |
 | `release_package.yaml` | Files included in a release package. |
-| `web_users.yaml`, `web_users.example.yaml` | File-based console users. Not permitted in production mode — use environment tokens. |
+| `web_users.yaml` | File-based console users, consulted only when no token environment variables are set and refused in production. Roles are defined in code, not here. |
 | `environment.template` | Copyable starting point for a local, untracked `.env`. |
 
 ## Safety profiles

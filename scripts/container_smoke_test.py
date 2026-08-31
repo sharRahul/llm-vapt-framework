@@ -41,17 +41,36 @@ def test_health(url: str, retries: int = 10, delay: float = 2.0) -> bool:
 
 
 def test_readyz(url: str) -> bool:
+    """The readiness probe must answer and report an accurate state.
+
+    A fresh container ships no targets on purpose - VulnoraIQ has no default
+    target - so ``not_ready`` with zero targets is the correct answer, returned
+    as 503. Demanding a 2xx here would fail the safe default and push someone
+    towards shipping a target just to make CI green.
+    """
     try:
         resp = urllib.request.urlopen(f"{url}/readyz", timeout=5)
-        data = json.loads(resp.read().decode())
-        if data.get("status") == "ready":
-            LOGGER.info("Readiness check passed")
-            return True
-        LOGGER.warning("Not ready: %s", data)
-        return False
+        status, data = resp.status, json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        if exc.code != 503:
+            LOGGER.error("Readiness probe returned an unexpected status: %d", exc.code)
+            return False
+        status, data = exc.code, json.loads(exc.read().decode())
     except (urllib.error.URLError, json.JSONDecodeError) as exc:
         LOGGER.error("Readiness check failed: %s", exc)
         return False
+
+    if "status" not in data or "targets_loaded" not in data:
+        LOGGER.error("Readiness body is missing expected fields: %s", data)
+        return False
+    if status == 503:
+        if data["status"] != "not_ready" or data["targets_loaded"] != 0:
+            LOGGER.error("503 readiness must mean not_ready with no targets: %s", data)
+            return False
+        LOGGER.info("Readiness check passed: not_ready with 0 targets (the expected default)")
+        return True
+    LOGGER.info("Readiness check passed: ready with %s target(s)", data["targets_loaded"])
+    return True
 
 
 def test_production_fails_without_token(url: str) -> bool:
@@ -102,7 +121,7 @@ def main() -> None:
     LOGGER.info("Starting container %s...", container_name)
     result = run([
         "docker", "run", "-d", "--name", container_name,
-        "-p", f"{port}:8787",
+        "-p", f"127.0.0.1:{port}:8787",
         "-e", "VULNORAIQ_ENV=production",
         "-e", "VULNORAIQ_ADMIN_TOKEN=smoke-test-container-token-2024",
         image,

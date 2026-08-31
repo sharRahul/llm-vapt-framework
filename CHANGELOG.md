@@ -15,6 +15,10 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- `scripts/docker_smoke_test.py` could never pass. It asserted that a scan report and evidence existed in a fresh lab, which VulnoraIQ never produces because it ships no default target, and it still referenced a mock agent removed in 0.3.0. It now checks what it can genuinely verify from inside the lab: service reachability, target-scope enforcement in the container's own environment, and redaction of any evidence present.
+- The container smoke test demanded a `ready` readiness probe. A fresh lab correctly reports `not_ready` with zero targets, so the check failed on a correctly configured deployment; it now asserts that exact state. CI runs the maintained smoke test rather than its own inline curl.
+- `os.add_dll_directory` is Windows-only and failed type checking on Linux. Guarded with `sys.platform` so the checker narrows it.
+- The build backend floor is `setuptools>=83.0.0` (PYSEC-2026-3447), and CI upgrades pip, setuptools, and wheel before auditing so the dependency audit reflects a patched toolchain.
 - **A failed scan rendered as a clean zero-finding result.** The asset card showed `Info · RISK 0 · 0 vulns` with nothing indicating the scan had never run. Assets now carry the job status and render a **Scan failed** badge with the reason.
 - **A misconfigured target failed with `internal scan error`.** The scanner raises an actionable message ("Target 'x' is a placeholder…"), and the blanket exception handler discarded it. Configuration and authorisation failures now report their own reason; only genuine faults stay opaque.
 - **The progress stream announced `target_validated` before validating.** A run against a placeholder target emitted "target validated" and then immediately failed on that same validation. `Scanner.validate_scan()` is now a pre-flight, and the event is emitted only once validation passes.
@@ -45,6 +49,8 @@ All notable changes to this project will be documented in this file.
 
 ### Removed
 
+- `config/agent_runtimes.yaml` and `config/web_users.example.yaml`. The first was the manifest for the deleted agent-runtime manager and nothing read it; its one real asset — the HTTP agent bridge under `docker/agents/` — is now declared in `config/agent_templates.yaml`, the file the code actually reads, so the shipped agent is reachable from the Agents workspace for the first time. The second duplicated `web_users.yaml` and existed only to carry placeholder token hashes, which is the pattern the `.env` policy removed.
+- The unread `roles` and `default_role` blocks from `config/web_users.yaml`. Roles and their permissions are defined in `webui/auth.py`; the config implied they were tunable when they were not.
 - **All tracked `.env*` files.** `.env.example`, `.env.docker.example`, and `.env.production.example` are removed, and `.gitignore` now blocks `.env`, `.env.*`, and both patterns in any subdirectory with no exceptions. Every supported variable is documented in `docs/reference/environment-variables.md`, and `config/environment.template` is the copyable starting point — deliberately not named `.env.*`. `docker-compose.yml` no longer uses `env_file`.
 - Dead code: `scripts/launch_webui.py` (a second HTTP server with a conflicting `/api/agents` contract, invoked by no launcher), `webui/agent_runtime.py`, `webui/project_analyzer.py`, `core/orchestrator.py`, `integrations/base.py`, `integrations/adapters.py`, `integrations/endpoint_security.py`, and four empty target-adapter subclasses. Their test coverage was rewritten against the live code paths rather than deleted.
 - `requirements.txt`, which duplicated `pyproject.toml` and put `pytest` in the runtime dependency set, and the unused `rich` dependency.

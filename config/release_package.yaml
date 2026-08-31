@@ -27,6 +27,7 @@ include_paths:
   - config/targets.yaml
   - config/target_contracts.yaml
   - config/web_users.yaml
+  - config/agent_templates.yaml
   - config/report_branding.yaml
   - config/attack_profiles.yaml
   - config/policies.yaml
