@@ -8,46 +8,6 @@ Ordered by how much each one constrains what can safely be built next.
 
 ---
 
-## SM-1 — There is no agent runtime state machine · **High**
-
-**The design assumes.** An agent run moves through explicit, observable states:
-`CREATED → PREPARING → READY → RUNNING → WAITING_FOR_TOOL / WAITING_FOR_APPROVAL
-→ RUNNING → ANALYSING → COMPLETED`, with terminal `FAILED`, `CANCELLED`,
-`TIMED_OUT`, `BLOCKED`.
-
-**What exists.** A `PersistedScanJob` with four informal statuses — `queued`,
-`running`, `completed`, `failed` — set by string assignment from several places.
-There is no transition table, nothing rejects an invalid transition, and there is
-no `cancelled` or `timed_out` state at all: a timed-out scan is recorded as
-`failed` with a message.
-
-**What this blocks.** Cancellation, approval gates, resumable runs, and any
-honest "what is this run doing right now" view. It also makes the state
-untestable as a unit — you can only assert on the end result.
-
-**Shape of the work.** A `ScanRunState` enum plus a `transition(from, to)` that
-raises on an illegal move; persist transitions as first-class rows rather than
-free-text events; add `cancelled` and `timed_out`. Scope it to the scan runner
-first — Agent Lab deployments can adopt the same machine afterwards.
-
----
-
-## SM-2 — Scan runs cannot be cancelled · **High**
-
-**What exists.** `POST /api/scans` starts a daemon thread. Nothing can stop it.
-A scan against a slow or hanging target runs until its own timeouts expire, and
-the operator can only wait or restart the process.
-
-**Why it matters for a security tool.** "Stop sending traffic to that target,
-now" is a safety control, not a convenience. An operator who realises they have
-the wrong target has no way to act on that realisation.
-
-**Shape of the work.** A cancellation token carried into `TestRunner` and checked
-between modules and between payloads; `POST /api/scans/{id}/cancel`; a
-`cancelled` terminal state (SM-1); the SSE stream emitting the cancellation.
-
----
-
 ## SM-3 — There is no tool/scanner contract · **High**
 
 **The design assumes.** Each external tool declares a contract: identifier,
@@ -72,28 +32,6 @@ Docker.
 
 ---
 
-## SM-4 — Findings have no first-class provenance · **Medium**
-
-**The design assumes.** A finding distinguishes raw tool output, observation,
-inferred finding, and confirmed vulnerability, and records source, tool,
-timestamp, confidence, and analysis provenance as structured fields.
-
-**What exists.** `Finding` has `evidence: dict[str, Any]`. Modules put confidence
-and limitations in there by convention, with no schema. `docs/guides/findings.md`
-documents the distinction accurately as a *practice*; the type system does not
-enforce it.
-
-**Why it matters.** The product's core claim is that findings are evidence, not
-verdicts. That claim currently rests on convention. A module that omitted
-confidence would produce a finding indistinguishable from a well-evidenced one.
-
-**Shape of the work.** Promote `source`, `tool`, `confidence`, `observed_at`, and
-`analysis_provenance` to typed fields on `Finding` with a required
-`FindingSource` enum (`scanner_observed` / `inferred` / `ai_assisted`);
-validate at construction; carry them through the report generators.
-
----
-
 ## SM-5 — No structured tool-request path from model output · **Medium**
 
 **The design assumes.** `LLM output → structured tool request → schema
@@ -115,49 +53,17 @@ Depends on SM-3.
 
 ---
 
-## SM-6 — Configuration is not validated at startup · **Medium**
-
-**The design assumes.** Configuration is validated at startup and fails early
-with useful errors.
-
-**What exists.** Each YAML file is read lazily by whoever needs it and coerced
-ad hoc. A malformed `attack_profiles.yaml` surfaces as a failed scan; a
-malformed `safety_profiles.yaml` silently yields an empty profile — which
-*weakens* enforcement rather than failing closed. The production checks
-(`webui/production_checks.py`) cover deployment settings, not the YAML.
-
-**Why it matters.** A safety profile that fails to parse should stop the server,
-not quietly remove the limits it was supposed to impose.
-
-**Shape of the work.** Typed config models loaded once at startup, validated
-together, with a `--check-config` mode; fail closed on an unparseable safety
-profile.
-
----
-
-## SM-7 — Long scans still run in-process · **Medium**
+## SM-7 — Long scans still run in-process · **Low**
 
 **What exists.** Scans run on daemon threads inside the web server. Concurrency
-is bounded and queued work now waits properly, but the work still shares the
-server's process, memory, and lifetime. A server restart loses every in-flight
-scan with no recovery — the job stays `running` in the database forever.
+is bounded, queued work waits properly, a run can be cancelled, and a restart no
+longer strands rows — startup reconciliation moves any non-terminal job to
+`failed`. What remains is that the work still shares the server's process,
+memory, and lifetime.
 
-**Shape of the work.** Either reconcile orphaned `running` jobs at startup (small,
-worth doing regardless), or move execution to a worker process. The reconciliation
-step is a prerequisite either way.
-
----
-
-## SM-8 — Evidence is written but never read back · **Low**
-
-`VULNORAIQ_EVIDENCE_DIR` is consumed by `core/real_scan.py`, which writes raw
-request/response evidence to disk. Nothing reads it: no API endpoint serves it,
-the console cannot show it, and it is not included in the report artefacts. The
-evidence a human reviewer would most want is the least reachable.
-
-**Shape of the work.** An evidence index per scan, an artifact route that serves
-it under the same authorisation rules as reports, and a link from the finding
-detail pane.
+**Shape of the work.** Move execution to a worker process. Deliberately not done
+yet: the reconciliation step removed the sharp edge, and the queue/worker
+decision should be driven by a real concurrency need rather than anticipated.
 
 ---
 
@@ -182,6 +88,19 @@ handful of components that encode product rules. Not a large job, and it is what
 makes frontend changes safe to review.
 
 ---
+
+## Delivered
+
+Removed from this list once the boundary exists. Kept here as a pointer so the
+numbering stays stable and a reader does not wonder where an item went.
+
+| Item | Where it lives now |
+| --- | --- |
+| SM-1 — no agent runtime state machine | `core/scan_state.py`; transitions persisted in `scan_transitions` and returned by `GET /api/scans/{id}`. |
+| SM-2 — scan runs cannot be cancelled | `core/cancellation.py`, `POST /api/scans/{id}/cancel`, and the console's **Stop** control. |
+| SM-4 — findings have no first-class provenance | `source`, `confidence`, `tool`, and `observed_at` are required fields on `Finding`, carried through all three report formats and shown as a badge. |
+| SM-6 — configuration is not validated at startup | `core/config_validation.py`, run on every start and available as `--check-config`; safety profiles fail closed. |
+| SM-8 — evidence is written but never read back | `core/evidence_index.py`, the `/evidence` routes, and the console's **Raw evidence** panel. |
 
 ## Explicitly not missing
 

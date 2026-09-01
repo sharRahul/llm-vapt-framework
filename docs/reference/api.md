@@ -83,10 +83,43 @@ before the target can ever be scanned.
 | `GET` | `/api/scans/{id}/findings/{finding_id}/history` | `view_scans` | Audit trail of state changes. |
 | `PATCH` | `/api/scans/{id}/findings/{finding_id}` | `view_scans` | Update triage state. |
 | `POST` | `/api/scans/{id}/findings/{finding_id}/actions` | `view_scans` | Same update, as an action post. |
+| `POST` | `/api/scans/{id}/cancel` | `start_configured_scan` | Stop a non-terminal run. Returns `202`, or `409` when the run already ended. |
 | `GET` | `/api/scans/{id}/artifact/{name}` | `download_artifacts` | Download a generated artefact. |
+| `GET` | `/api/scans/{id}/evidence` | `download_artifacts` | The scan's raw-evidence index. |
+| `GET` | `/api/scans/{id}/evidence/{finding_id}` | `download_artifacts` | One finding's evidence entry. |
+| `GET` | `/api/scans/{id}/evidence/{finding_id}/{artifact_id}` | `download_artifacts` | One indexed artefact's redacted contents. |
 
 Artefact names come from the job's own output map (`markdown`, `json`, `sarif`,
-`dashboard_markdown`, `dashboard_html`); arbitrary paths are refused.
+`dashboard_markdown`, `dashboard_html`); arbitrary paths are refused. Evidence is
+reachable only through the index the scan wrote, and only for paths inside the
+deployment's evidence root — see [Findings and evidence](../guides/findings.md#raw-evidence).
+
+### Run states
+
+`GET /api/scans/{id}` returns the run's `status` and a `transitions` list of
+`{from_state, to_state, at, actor, reason}` rows.
+
+```text
+queued ──► running ──► analysing ──► completed
+   │          │
+   │          ├──► cancelled    (an operator asked it to stop)
+   │          ├──► timed_out    (exceeded VULNORAIQ_SCAN_BUDGET_SECONDS)
+   │          └──► failed       (target rejected, config invalid, internal fault)
+   └─────────────► cancelled
+```
+
+Every status change goes through a transition table; an illegal move raises
+rather than silently overwriting the record, and terminal states never move
+again. `cancelled` and `timed_out` are distinct from `failed`: an operator who
+stopped a run and a target that never answered are different outcomes.
+
+Cancelling is cooperative. The run checks for it between modules and before each
+payload, so a cancel takes effect within one in-flight request rather than
+mid-request. A run cancelled while still queued never sends a request at all.
+
+On startup the server moves any job left in a non-terminal state to `failed`
+with `"interrupted by a server restart"`, so nothing stays `running` forever
+after a restart.
 
 Finding status must be one of `open`, `triaged`, `in_progress`, `accepted_risk`,
 `false_positive`, `fixed`, `wont_fix`. `false_positive` and `accepted_risk`
@@ -96,13 +129,18 @@ remediation fields are writable.
 ### Event stream
 
 ```text
-event: scan_started      data: {"scan_id": ..., "progress": {...}, ...}
+event: scan_started      data: {"scan_id": ..., "progress": {...}, "data": {"state": "running"}}
 event: finding_created   data: {...}
 event: heartbeat         data: {...}
+event: scan_failed       data: {..., "data": {"state": "cancelled", "actor": "...", "reason": "..."}}
 event: done              data: {<final job>}
 ```
 
 A stream ends at the terminal event or at `VULNORAIQ_SSE_MAX_STREAM_SECONDS`.
+
+Every state change carries its precise state in the event's `data.state`.
+Cancelled and timed-out runs use the existing `scan_failed` event type so
+existing clients keep working; read `data.state` to tell them apart.
 
 ## Agents (prebuilt images)
 

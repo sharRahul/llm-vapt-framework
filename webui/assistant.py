@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -17,6 +18,43 @@ class AssistantSettings:
     temperature: float
     system_prompt: str
     max_tokens: int
+
+
+#: Structured fields the prompt supplies. A fragment that is only one of these
+#: is the model repeating its input back, which tells a reviewer nothing.
+_SUMMARY_FIELDS = ("title", "severity", "status", "affected component", "recommendation", "evaluators")
+_ECHO_RE = re.compile(rf"^\s*(?:{'|'.join(_SUMMARY_FIELDS)})\s*:", re.IGNORECASE)
+#: Sentence and bullet boundaries. Small models emit both.
+_FRAGMENT_RE = re.compile(r"(?<=[.!?])\s+|\s*[•‣●]\s*|\n+")
+
+
+def _tidy_explanation(text: str) -> str:
+    """Strip echoed prompt fields and repeated fragments from model output.
+
+    A small local model often restates the structured finding summary it was
+    given and then repeats whole passages. Neither adds information, and the
+    console rendered the result as a wall of duplicated prose. If nothing
+    survives the filter the original text is returned unchanged, so this can
+    only ever remove noise, never the answer.
+    """
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+    kept: list[str] = []
+    seen: set[str] = set()
+    for fragment in _FRAGMENT_RE.split(raw):
+        stripped = re.sub(r"^Description\s*:\s*", "", (fragment or "").strip(), flags=re.IGNORECASE)
+        if len(stripped) < 3 or _ECHO_RE.match(stripped):
+            continue
+        key = re.sub(r"\W+", " ", stripped.lower()).strip()
+        if key in seen:
+            continue
+        seen.add(key)
+        kept.append(stripped if stripped.endswith((".", "!", "?", ":")) else stripped + ".")
+    # A lead-in whose list was entirely duplicated has nothing left to introduce.
+    while kept and kept[-1].endswith(":"):
+        kept.pop()
+    return " ".join(kept) or raw
 
 
 class AssistantOrchestrator:
@@ -116,7 +154,7 @@ class AssistantOrchestrator:
                 },
             ]
             try:
-                text = self._model.generate(messages, temperature=0.2, max_tokens=320)
+                text = _tidy_explanation(self._model.generate(messages, temperature=0.2, max_tokens=320))
                 backend = "local-model"
             except ModelUnavailable as exc:
                 text, backend = self._templated_explanation(finding, context), f"templated ({exc})"

@@ -6,12 +6,17 @@ This document describes how VulnoraIQ release artifacts are built for Windows, L
 
 Platform release artifacts must **not** be built on every commit, push, or pull request.
 
-The `Build Release Artifacts` workflow in `.github/workflows/release-build.yml` runs only when:
+The `release-package` and `python-package` jobs in `.github/workflows/ci.yml` run
+only when:
 
 1. a GitHub Release is published; or
-2. a maintainer manually starts the workflow with `workflow_dispatch`.
+2. a maintainer starts the workflow with `workflow_dispatch` and selects
+   `run: release`.
 
-Normal quality gates remain in `.github/workflows/ci.yml` and any Python-specific CI workflow.
+Everything else in that workflow — the test matrix, the container smoke test, the
+supply-chain scans, and the weekly ATLAS refresh — is gated on its own event, so
+an ordinary push or pull request never builds a release package. See
+[Testing](testing.md#ci).
 
 ## Artifacts produced
 

@@ -15,11 +15,13 @@ import { VulnerableCodeBlock } from "./VulnerableCodeBlock";
 import { RemediatedCodeBlock } from "./RemediatedCodeBlock";
 import { FindingMarkdownReader } from "./FindingMarkdownReader";
 import { TriageControl } from "./TriageControl";
+import { RawEvidencePanel } from "./RawEvidencePanel";
 import { apiPostOptional } from "@/lib/api";
 
 interface AnalysisWorkspaceProps {
   finding: Finding;
   asset?: Asset;
+  scanId?: string;
   history?: FindingHistoryEntry[];
   onMarkForReview: () => void;
   onChangeStatus?: (patch: Record<string, string>) => void;
@@ -40,6 +42,7 @@ function parseState(value: FindingHistoryEntry["new_state"]): Record<string, unk
 export function AnalysisWorkspace({
   finding,
   asset,
+  scanId,
   history = [],
   onMarkForReview,
   onChangeStatus,
@@ -84,8 +87,8 @@ export function AnalysisWorkspace({
         <div className="flex flex-wrap items-center gap-2">
           <SeverityBadge severity={finding.severity} withIcon />
           <RiskScoreBadge score={finding.riskScore} size="md" />
-          <span className="inline-flex items-center rounded-sm border border-border bg-muted px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-muted-foreground" title={`${finding.tool} · ${finding.confidence} confidence`}>
-            Provenance · {provenanceLabel}
+          <span className="inline-flex items-center rounded-sm border border-border bg-muted px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-muted-foreground" title={`Provenance: ${provenanceLabel.toLowerCase()} · ${finding.tool} · ${finding.confidence} confidence`}>
+            {provenanceLabel}
           </span>
           <span
             className={cn(
@@ -167,6 +170,8 @@ export function AnalysisWorkspace({
         <div className="mt-4">
           <FindingMarkdownReader sections={finding.report} />
         </div>
+
+        {scanId ? <RawEvidencePanel scanId={scanId} findingId={finding.id} /> : null}
 
         {history.length ? (
           <section className="mt-4 rounded-lg border border-border bg-card p-3 shadow-card">

@@ -19,8 +19,11 @@ def test_react_app_does_not_import_or_fallback_to_dummy_data() -> None:
 
     assert "const displayFindings = runtimeFindings" in app
     assert "const displayAssets = activeScan ? [scanAsset(activeScan, runtimeFindings)] : []" in app
+    # The empty state must exist and must offer the real next step. This used to
+    # assert one exact marketing sentence, which broke on any copy edit while
+    # proving nothing about the behaviour.
     assert "No scans yet" in app
-    assert "no sample findings or dummy assets" in app
+    assert "emptySeverityDistribution" in app
     assert "/api/scans" in app
 
 

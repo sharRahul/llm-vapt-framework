@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+### Added
+
+- **An explicit scan run lifecycle.** A run's status was a plain string assigned from several call sites, with four informal values and no rules. `core/scan_state.py` now models `queued → running → analysing → completed` with terminal `cancelled`, `timed_out`, and `failed`; every status change goes through a transition table that raises on an illegal move, and each move is persisted as a `scan_transitions` row carrying the actor and reason. `GET /api/scans/{id}` returns that history, and each state change reaches the event stream with its precise state in `data.state` — cancelled and timed-out runs keep the existing `scan_failed` event type so current clients are unaffected.
+- **Scans can be stopped.** `POST /api/scans/{id}/cancel` and a **Stop** control in the console header end a run that is still going. Cancellation is cooperative and checked between modules and before each payload, so it takes effect within one in-flight request rather than mid-request; a run cancelled while queued never sends a request at all. For a tool that sends traffic to a target, "stop now" is a safety control, not a convenience.
+- **A whole-run budget.** A run exceeding `VULNORAIQ_SCAN_BUDGET_SECONDS` (default 1800) ends `timed_out` rather than as a generic failure, so "the target never answered" is distinguishable from "the target rejected us".
+- **Raw evidence is reachable.** `VULNORAIQ_EVIDENCE_DIR` was written to and never read back. Each scan now writes an `evidence-index.json` alongside its report artefacts, `GET /api/scans/{id}/evidence[/{finding_id}[/{artifact_id}]]` serves it under the same authorisation rule and redaction as artifact download, and the finding detail pane carries a collapsed **Raw evidence** section showing the captured request and response. Only paths already in the index, resolving inside the evidence root, can be read.
+- **Configuration is validated at startup.** `core/config_validation.py` checks every config file once, before anything consumes it, and reports all problems at once. `python -m webui.server --check-config` validates and exits.
+
 ### Security
 
 - **Removed a hardcoded administrator token.** `vulnoraiq-internal-admin-token` was accepted by `WebAuthManager.authenticate_token` in any non-production deployment — which is the default — granting full `manage_runtime` access (including Docker control) to anyone who could reach the server. There is now no built-in or default credential anywhere in VulnoraIQ; a token exists only because an operator configured one. A regression test asserts that no shipped value authenticates.
@@ -22,6 +30,11 @@ All notable changes to this project will be documented in this file.
 - The container smoke test demanded a `ready` readiness probe. A fresh lab correctly reports `not_ready` with zero targets, so the check failed on a correctly configured deployment; it now asserts that exact state. CI runs the maintained smoke test rather than its own inline curl.
 - `os.add_dll_directory` is Windows-only and failed type checking on Linux. Guarded with `sys.platform` so the checker narrows it.
 - The build backend floor is `setuptools>=83.0.0` (PYSEC-2026-3447), and CI upgrades pip, setuptools, and wheel before auditing so the dependency audit reflects a patched toolchain.
+- **Safety profiles fail closed.** An unreadable or malformed `safety_profiles.yaml` yielded an empty mapping, and a target naming a profile the file did not define got `{}` — silently removing every limit the profile existed to impose. Both now raise, and a malformed profile stops the server rather than weakening it.
+- **A restart no longer strands scans.** In-flight runs died with the process and their rows stayed `running` forever. On startup any job in a non-terminal state is moved to `failed` with `"interrupted by a server restart"`.
+- **Target readiness no longer disagrees with itself.** The Targets view inferred readiness locally from `allow_external` and `authorisation_required`, so a placeholder endpoint was badged **ready** on the same screen where the scan selector disabled it as unavailable. It reads the server's readiness, which is what the selector already used.
+- **A failed target load looked like an empty configuration.** `loadTargets` swallowed every error, so a rate-limited or failing request produced "No targets configured. Add a target…" for an operator who already had targets. The failure is reported.
+- **The assistant echoed its prompt and repeated itself.** The bundled small model restated the structured finding summary it was given and repeated whole passages, and the console rendered the result verbatim as a wall of duplicated prose. Echoed summary fields and duplicate fragments are stripped before the explanation is returned; if nothing survives the filter the original text is kept, so this can only remove noise.
 - **A failed scan rendered as a clean zero-finding result.** The asset card showed `Info · RISK 0 · 0 vulns` with nothing indicating the scan had never run. Assets now carry the job status and render a **Scan failed** badge with the reason.
 - **A misconfigured target failed with `internal scan error`.** The scanner raises an actionable message ("Target 'x' is a placeholder…"), and the blanket exception handler discarded it. Configuration and authorisation failures now report their own reason; only genuine faults stay opaque.
 - **The progress stream announced `target_validated` before validating.** A run against a placeholder target emitted "target validated" and then immediately failed on that same validation. `Scanner.validate_scan()` is now a pre-flight, and the event is emitted only once validation passes.
@@ -49,6 +62,9 @@ All notable changes to this project will be documented in this file.
 - `tests/test_scanner_authorisation.py` is no longer excluded from `pytest`; its stale expectations were rewritten to match intended behaviour.
 - The runtime image is slimmer: it installs runtime dependencies only, not the dev toolchain, and the Docker *client* only, not the `docker.io` engine package.
 - CI gained a Docker image build-and-smoke-test job and a check that no `.env` file is ever tracked. The placeholder `python-ci.yml` workflow and the validator coupling that kept it alive are gone.
+- **One workflow.** Test, container, supply-chain security, the weekly ATLAS refresh, and both release paths lived in five workflow files that repeated the same checkout/setup/validate steps and re-ran overlapping work on the same events. They are one `.github/workflows/ci.yml`, with each job gated on the event that should reach it and manual runs defaulting to `run: ci`, so starting the workflow by hand cannot accidentally publish anything.
+- Markdown reports carry each finding's source, confidence, tool, observation time, and limitations, matching what the JSON and SARIF reports already carried.
+- The console's empty states, panel descriptions, and view headers say less: the explanation lives in `docs/guides/`, and the screen shows the state and the next action.
 
 ### Removed
 

@@ -1,10 +1,17 @@
+"""Supply-chain scanning, SBOMs, and image signing in the consolidated workflow.
+
+These checks used to read `.github/workflows/security-supply-chain.yml`; the
+security job now lives in the single `ci.yml` alongside test, container, ATLAS,
+and release jobs.
+"""
+
 from __future__ import annotations
 
 from pathlib import Path
 
 
 def test_supply_chain_workflow_contains_required_tools_and_outputs() -> None:
-    workflow = Path(".github/workflows/security-supply-chain.yml").read_text(encoding="utf-8")
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
 
     assert "aquasecurity/trivy-action@v0.36.0" in workflow
     assert "docker/build-push-action@v7" in workflow
@@ -21,7 +28,7 @@ def test_supply_chain_workflow_contains_required_tools_and_outputs() -> None:
 
 
 def test_supply_chain_workflow_has_safe_publish_and_gate_controls() -> None:
-    workflow = Path(".github/workflows/security-supply-chain.yml").read_text(encoding="utf-8")
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
 
     assert "pull_request:" in workflow
     assert "workflow_dispatch:" in workflow

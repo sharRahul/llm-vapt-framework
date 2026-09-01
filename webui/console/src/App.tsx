@@ -16,6 +16,7 @@ import { TargetsManager } from "@/components/targets/TargetsManager";
 import { apiGet, apiPatch, apiPost } from "@/lib/api";
 import { useTheme } from "@/hooks/useTheme";
 import { emptyDashboardMetrics, emptySeverityDistribution, emptyTrendData } from "@/data/cleanState";
+import { phaseLabel, scanStateStyle } from "@/lib/scanState";
 import type { Asset, BackendFinding, Finding, FindingHistoryEntry, FindingMutationState, FindingStatus, ScanEvent, ScanJob, Severity, SeverityDistributionPoint, TargetConfig } from "@/types";
 
 const SCAN_EVENT_TYPES = ["scan_queued", "scan_started", "target_validated", "phase_started", "check_started", "check_completed", "finding_created", "evidence_saved", "report_written", "scan_completed", "scan_failed", "heartbeat"];
@@ -148,6 +149,7 @@ function ConsoleInner() {
   const [view, setView] = useState<ConsoleView>(() => viewFromHash() ?? "overview");
   const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
   const [scanning, setScanning] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [dashboardLoading, setDashboardLoading] = useState(false);
   const [activeScan, setActiveScan] = useState<ScanJob | null>(null);
   const [runtimeFindings, setRuntimeFindings] = useState<Finding[]>([]);
@@ -196,8 +198,10 @@ function ConsoleInner() {
       setConfiguredTargetIds(readyIds);
       setConfiguredTargets(targets);
       if (!scanTargetId || !readyIds.includes(scanTargetId)) setScanTargetId(readyIds[0] || "");
-    } catch {
-      // Targets unavailable; scan button will be disabled.
+    } catch (exc) {
+      // A failed request is not the same as an empty configuration: without
+      // this the console told the operator to add a target they already had.
+      notify(exc instanceof Error ? `Unable to load targets: ${exc.message}` : "Unable to load targets", "error");
     }
   }
 
@@ -254,28 +258,37 @@ function ConsoleInner() {
     scanSourceRef.current = source;
     const onEvent = (event: MessageEvent) => {
       const payload = JSON.parse(event.data) as ScanEvent;
-      setLiveScanEvents((prev) => {
-        const next = [...prev.slice(-49), payload];
-        setLiveFindingCount(next.filter((item) => item.type === "finding_created").length);
-        return next;
-      });
-      setScanPhase(payload.phase || payload.type);
+      // Heartbeats keep the connection alive; they are not progress, and they
+      // used to crowd every real step out of the visible timeline.
+      if (payload.type !== "heartbeat") {
+        setLiveScanEvents((prev) => {
+          const next = [...prev.slice(-49), payload];
+          setLiveFindingCount(next.filter((item) => item.type === "finding_created").length);
+          return next;
+        });
+        setScanPhase(phaseLabel(payload.phase || payload.type));
+      }
       setScanProgressPercent(payload.progress?.percent || 0);
       if (payload.type === "scan_completed" || payload.type === "scan_failed") {
         setScanning(false);
+        setCancelling(false);
         setDashboardLoading(false);
         source.close();
         scanSourceRef.current = null;
-        if (payload.type === "scan_completed") {
+        // Cancelled and timed-out runs share the terminal event type but are
+        // not failures: the precise state travels in the event payload.
+        const state = String(payload.data?.state || (payload.type === "scan_completed" ? "completed" : "failed"));
+        const style = scanStateStyle(state);
+        if (style.successful) {
           // Preserve the operator's current context. A completed scan must not
           // abruptly pull them away from the view they were using.
           void refreshScanFindings(scan.id, { ...scan, status: "completed" }, undefined, false);
         } else {
-          // The backend reports why a scan was rejected; show that, not a generic message.
-          const reason = payload.message || "Scan failed";
-          setActiveScan({ ...scan, status: "failed", error: reason });
-          setScanPhase("Scan failed");
-          notify(reason, "error");
+          // The backend reports why a scan ended; show that, not a generic message.
+          const reason = payload.message || `Scan ${style.label.toLowerCase()}`;
+          setActiveScan({ ...scan, status: state, error: reason });
+          setScanPhase(`Scan ${style.label.toLowerCase()}`);
+          notify(reason, state === "cancelled" ? "info" : "error");
         }
       }
     };
@@ -287,6 +300,7 @@ function ConsoleInner() {
     if (scanning) return;
     const targetId = explicitTarget || scanTargetId;
     setScanning(true);
+    setCancelling(false);
     setDashboardLoading(true);
     setScanPhase("Creating scan");
     setScanProgressPercent(0);
@@ -305,6 +319,19 @@ function ConsoleInner() {
       setScanning(false);
       setDashboardLoading(false);
       setScanPhase("Scan start failed");
+      notify(exc instanceof Error ? exc.message : String(exc), "error");
+    }
+  }
+
+  async function handleCancelScan(): Promise<void> {
+    if (!activeScan || cancelling) return;
+    setCancelling(true);
+    setScanPhase("Stopping scan");
+    try {
+      await apiPost(`/api/scans/${encodeURIComponent(activeScan.id)}/cancel`, {});
+      notify("Stop requested — the scan ends after the request in flight.", "info");
+    } catch (exc) {
+      setCancelling(false);
       notify(exc instanceof Error ? exc.message : String(exc), "error");
     }
   }
@@ -340,18 +367,27 @@ function ConsoleInner() {
   };
 
   const navPane = <AssetNavigationPane assets={displayAssets} findingsById={findingsById} selectedFindingId={selectedFindingId} onSelectFinding={handleSelectFinding} />;
-  const middlePane = selectedFinding ? <AnalysisWorkspace finding={selectedFinding} asset={selectedAsset} history={selectedFindingHistory} onMarkForReview={() => handleMarkForReview(selectedFinding)} onChangeStatus={(patch) => void persistFindingState(selectedFinding, patch)} /> : <EmptyState icon={MousePointerSquareDashed} title="No scan finding selected" description="Run a scan or open a saved scan result. Clean workspaces show no sample findings or dummy assets." />;
-  const intelPane = selectedFinding ? <IntelligencePanel finding={selectedFinding} /> : <EmptyState icon={ScanSearch} title="No finding selected" description="Vulnerability intelligence and the Ask VulnoraIQ assistant appear here after a real backend finding is selected." />;
+  const middlePane = selectedFinding ? <AnalysisWorkspace finding={selectedFinding} asset={selectedAsset} scanId={activeScan?.id} history={selectedFindingHistory} onMarkForReview={() => handleMarkForReview(selectedFinding)} onChangeStatus={(patch) => void persistFindingState(selectedFinding, patch)} /> : <EmptyState icon={MousePointerSquareDashed} title="No scan finding selected" description="Run a scan, or open a saved result." />;
+  const intelPane = selectedFinding ? <IntelligencePanel finding={selectedFinding} /> : <EmptyState icon={ScanSearch} title="No finding selected" description="Select a finding to see intelligence and the assistant." />;
 
   return (
-    <AppShell view={view} onChangeView={setView} theme={theme} onToggleTheme={toggleTheme} scanning={scanning} scanStatusLabel={scanPhase} scanProgressPercent={scanProgressPercent} scanFindingCount={liveFindingCount} scanDisabled={configuredTargetIds.length === 0} onToggleScan={() => void handleToggleScan()} targets={configuredTargets} selectedTarget={scanTargetId} onSelectTarget={setScanTargetId}>
+    <AppShell view={view} onChangeView={setView} theme={theme} onToggleTheme={toggleTheme} scanning={scanning} scanStatusLabel={scanPhase} scanProgressPercent={scanProgressPercent} scanFindingCount={liveFindingCount} scanDisabled={configuredTargetIds.length === 0} onToggleScan={() => void handleToggleScan()} onCancelScan={() => void handleCancelScan()} cancelling={cancelling} targets={configuredTargets} selectedTarget={scanTargetId} onSelectTarget={setScanTargetId}>
       {view === "projects" ? <ProjectImporter onTargetsChanged={() => void loadTargets()} onRunScan={runScanForTarget} onNavigate={setView} /> : view === "agents" ? <AgentHost /> : view === "targets" ? <TargetsManager /> : view === "overview" ? (
         <div className="h-full overflow-y-auto scrollbar-thin p-4 sm:p-6">
           <div className="mx-auto max-w-[1400px]">
             <DashboardOverview metrics={metrics} trend={emptyTrendData} distribution={runtimeFindings.length ? distribution : emptySeverityDistribution} loading={dashboardLoading} />
-            {!dashboardLoading && !activeScan ? <section className="mt-4 rounded-xl border border-border bg-card p-6 text-sm text-muted-foreground shadow-card"><p className="text-xs font-bold uppercase tracking-wide">Clean workspace</p><h2 className="mt-1 text-lg font-extrabold text-foreground">No scans yet</h2><p className="mt-2 max-w-3xl">VulnoraIQ does not show sample assets, mock findings, or dummy dashboard data. Run a scan from the header or configure an authorised target to populate this dashboard with your own evidence.</p><div className="ui-action-row mt-4"><button type="button" onClick={() => setView("targets")} className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-bold text-primary-foreground shadow-card transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Server className="size-4" />Configure a target</button>{configuredTargetIds.length > 0 ? <button type="button" onClick={() => void handleToggleScan()} disabled={scanning} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-canvas px-3 py-2 text-xs font-bold text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Play className="size-4" />Run a scan</button> : null}</div></section> : null}
-            {activeScan && !runtimeFindings.length && !dashboardLoading ? <section className="mt-4 rounded-xl border border-border bg-card p-6 text-sm text-muted-foreground shadow-card"><p className="text-xs font-bold uppercase tracking-wide">Latest scan</p><h2 className="mt-1 text-lg font-extrabold text-foreground">No findings returned</h2><p className="mt-2 max-w-3xl">The latest saved scan is loaded, but it did not return findings. Reports and artifacts remain available through the backend output directory.</p></section> : null}
-            {liveScanEvents.length ? <section className="mt-4 rounded-xl border border-border bg-card p-4 shadow-card" aria-live="polite"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Live backend scan</p><h2 className="mt-1 text-lg font-extrabold">{scanPhase}</h2></div><p className="text-sm font-semibold text-muted-foreground">{Math.round(scanProgressPercent)}% · {liveFindingCount} findings</p></div><div className="mt-3 h-2 overflow-hidden rounded bg-muted"><div className="h-full bg-[var(--accent-sage)]" style={{ width: `${scanProgressPercent}%` }} /></div><ol className="mt-3 max-h-48 space-y-1 overflow-auto text-xs text-muted-foreground">{liveScanEvents.slice(-10).map((event, index) => <li key={`${event.event_id}-${index}`}>{event.type}: {event.message}</li>)}</ol></section> : null}
+            {!dashboardLoading && !activeScan ? <section className="mt-4 rounded-xl border border-border bg-card p-6 text-sm text-muted-foreground shadow-card"><h2 className="text-lg font-extrabold text-foreground">No scans yet</h2><p className="mt-1 max-w-2xl">Configure an authorised target, then run a scan.</p><div className="ui-action-row mt-4"><button type="button" onClick={() => setView("targets")} className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-2 text-xs font-bold text-primary-foreground shadow-card transition-colors hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Server className="size-4" />Configure a target</button>{configuredTargetIds.length > 0 ? <button type="button" onClick={() => void handleToggleScan()} disabled={scanning} className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-canvas px-3 py-2 text-xs font-bold text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"><Play className="size-4" />Run a scan</button> : null}</div></section> : null}
+            {/* A run that was cancelled or timed out produced no findings because
+                it did not finish — saying it "completed without findings" would
+                read as a clean result. */}
+            {activeScan && !runtimeFindings.length && !dashboardLoading ? (
+              scanStateStyle(activeScan.status).successful ? (
+                <section className="mt-4 rounded-xl border border-border bg-card p-6 text-sm text-muted-foreground shadow-card"><h2 className="text-lg font-extrabold text-foreground">No findings returned</h2><p className="mt-1 max-w-2xl">The scan completed without findings. Reports remain in the output directory.</p></section>
+              ) : (
+                <section className="mt-4 rounded-xl border border-border bg-card p-6 text-sm text-muted-foreground shadow-card"><h2 className="text-lg font-extrabold text-foreground">Scan {scanStateStyle(activeScan.status).label.toLowerCase()}</h2><p className="mt-1 max-w-2xl">{activeScan.error || "The run ended before it produced results."}</p></section>
+              )
+            ) : null}
+            {liveScanEvents.length ? <section className="mt-4 rounded-xl border border-border bg-card p-4 shadow-card" aria-live="polite"><div className="flex flex-wrap items-center justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Live backend scan</p><h2 className="mt-1 text-lg font-extrabold">{scanPhase}</h2></div><p className="text-sm font-semibold text-muted-foreground">{Math.round(scanProgressPercent)}% · {liveFindingCount} findings</p></div><div className="mt-3 h-2 overflow-hidden rounded bg-muted"><div className="h-full bg-[var(--accent-sage)]" style={{ width: `${scanProgressPercent}%` }} /></div><ol className="mt-3 max-h-48 space-y-1 overflow-auto text-xs text-muted-foreground">{liveScanEvents.slice(-10).map((event, index) => <li key={`${event.event_id}-${index}`}>{event.message}</li>)}</ol></section> : null}
           </div>
         </div>
       ) : <WorkspaceLayout left={navPane} middle={middlePane} right={intelPane} />}

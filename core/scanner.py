@@ -7,6 +7,7 @@ from typing import Any, cast
 
 import yaml
 
+from core.cancellation import CancellationToken
 from core.evidence_model import OwaspOracleRegistry
 from core.policy_engine import PolicyEngine
 from core.production_detection import ProductionOwaspDetector
@@ -80,6 +81,8 @@ class Scanner:
         profile_name: str = "baseline",
         target: TargetClient | None = None,
         authorised: bool = True,
+        cancellation: CancellationToken | None = None,
+        job_id: str | None = None,
     ) -> ScanResult:
         config = self._load_config()
         profile = self._resolve_profile(config, profile_name)
@@ -94,9 +97,11 @@ class Scanner:
         if profile_name == "owasp-aitg-full" or "aitg_full_manifest" in profile.get("modules", []):
             findings = self._run_aitg_full_manifest(context)
         elif isinstance(target_client, RealTargetClient):
-            findings = run_real_target_modules(context, profile, self.runner.payload_library)
+            findings = run_real_target_modules(
+                context, profile, self.runner.payload_library, job_id=job_id, cancellation=cancellation
+            )
         else:
-            findings = self.runner.run_modules(profile["modules"], context)
+            findings = self.runner.run_modules(profile["modules"], context, cancellation=cancellation)
         aitg_matrix = (
             self._aitg_coverage_matrix(findings)
             if profile_name == "owasp-aitg-full" or "aitg_full_manifest" in profile.get("modules", [])

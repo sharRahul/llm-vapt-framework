@@ -1,21 +1,12 @@
-import { HeaderBar, type ConsoleView } from "./HeaderBar";
+import { HeaderBar, type HeaderBarProps } from "./HeaderBar";
 
-interface AppShellProps {
-  view: ConsoleView;
-  onChangeView: (view: ConsoleView) => void;
-  theme: "light" | "dark";
-  onToggleTheme: () => void;
-  scanning: boolean;
-  scanStatusLabel?: string;
-  scanProgressPercent?: number;
-  scanFindingCount?: number;
-  scanDisabled?: boolean;
-  onToggleScan: () => void;
-  targets?: { id: string; label: string; ready?: boolean }[];
-  selectedTarget?: string;
-  onSelectTarget?: (id: string) => void;
-  children: React.ReactNode;
-}
+/**
+ * The shell owns the chrome and forwards every header control unchanged.
+ *
+ * The props were duplicated from `HeaderBarProps` and drifted whenever a
+ * control was added, so they are derived from it instead.
+ */
+type AppShellProps = HeaderBarProps & { children: React.ReactNode };
 
 export function AppShell({ children, ...header }: AppShellProps) {
   return (

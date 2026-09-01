@@ -49,10 +49,20 @@ function parseJsonField(value: string, fallback: unknown): unknown {
   return JSON.parse(value);
 }
 
-function targetHealth(target: TargetRecord): "ready" | "needs-owner" | "needs-auth" | "external" {
-  if (target.config.allow_external) return "external";
-  if (target.config.authorisation_required === false) return "needs-auth";
-  return "ready";
+/** Server-reported readiness for a target, keyed by target id. */
+type ReadinessMap = Record<string, { ready?: boolean; reason?: string }>;
+
+/**
+ * Whether a target can be scanned, as the server judges it.
+ *
+ * This used to be inferred locally from `allow_external` and
+ * `authorisation_required`, which disagreed with the readiness the API returns
+ * and the header selector uses: a placeholder endpoint was labelled "ready"
+ * here while the same target was disabled in the scan selector.
+ */
+function targetReadiness(id: string, readiness: ReadinessMap): { ready: boolean; reason: string } {
+  const entry = readiness[id];
+  return { ready: entry?.ready !== false, reason: entry?.reason || "" };
 }
 
 function endpointLabel(target: TargetConfig): string {
@@ -61,6 +71,7 @@ function endpointLabel(target: TargetConfig): string {
 
 export function TargetsManager() {
   const [targets, setTargets] = useState<TargetRecord[]>([]);
+  const [readiness, setReadiness] = useState<ReadinessMap>({});
   const [selectedId, setSelectedId] = useState("");
   const [draftId, setDraftId] = useState("");
   const [draft, setDraft] = useState<TargetConfig>(defaultTarget());
@@ -103,15 +114,19 @@ export function TargetsManager() {
     });
   }, [environmentFilter, query, targets]);
   const latestJobs = useMemo(() => jobs.filter((job) => job.target === draftId).slice(0, 5), [draftId, jobs]);
-  const readyCount = useMemo(() => targets.filter((target) => targetHealth(target) === "ready").length, [targets]);
+  const readyCount = useMemo(
+    () => targets.filter((target) => targetReadiness(target.id, readiness).ready).length,
+    [targets, readiness],
+  );
 
   async function loadTargets() {
     setLoading(true);
     setError(null);
     try {
-      const data = await apiGet<{ targets: Record<string, TargetConfig> }>("/api/targets");
+      const data = await apiGet<{ targets: Record<string, TargetConfig>; readiness?: ReadinessMap }>("/api/targets");
       const records = Object.entries(data.targets || {}).map(([id, config]) => ({ id, config }));
       setTargets(records);
+      setReadiness(data.readiness || {});
       const next = records.find((record) => record.id === selectedId) || records[0];
       if (next) selectTarget(next);
       else { setSelectedId(""); setDraftId("");
@@ -274,6 +289,7 @@ export function TargetsManager() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dockerBaseUrl]);
 
+  const selectedReadiness = targetReadiness(draftId, readiness);
   const isExternal = draft.allow_external === true;
   // Targets backed by a deployed Agent Lab container get their Base URL from Docker and
   // are locked. Direct LLM/RAG/agent HTTP endpoints are authored here and stay editable.
@@ -286,6 +302,13 @@ export function TargetsManager() {
     { label: dockerBacked ? "Base URL from Docker" : "Base URL configured", ok: Boolean(lockedBaseUrl) },
     { label: "Endpoint configured", ok: Boolean(draft.endpoint_path) },
     { label: "Model set", ok: !needsModel || Boolean(draft.model) },
+    // The rest of this list checks the draft form. Without the server's own
+    // verdict the panel showed four green ticks beside a target the list badged
+    // "not ready", which is the same target.
+    {
+      label: selectedReadiness.ready ? "Scannable" : selectedReadiness.reason || "Not scannable",
+      ok: selectedReadiness.ready,
+    },
   ];
 
   return (
@@ -294,7 +317,6 @@ export function TargetsManager() {
         <div className="mb-4 flex flex-wrap items-start justify-between gap-2">
           <div className="min-w-0">
             <h2 className="text-lg font-extrabold">Targets</h2>
-            <p className="break-anywhere text-xs text-muted-foreground">Manage authorised AI systems and scan readiness.</p>
           </div>
           <Button size="sm" variant="primary" onClick={newTarget} className="shrink-0">
             <Plus className="size-4" />
@@ -321,7 +343,7 @@ export function TargetsManager() {
         </div>
         {loading ? <p className="text-sm text-muted-foreground">Loading targets…</p> : null}
         <div className="space-y-2">
-          {filteredTargets.map((target) => <TargetListItem key={target.id} target={target} active={selectedId === target.id} onClick={() => selectTarget(target)} />)}
+          {filteredTargets.map((target) => <TargetListItem key={target.id} target={target} active={selectedId === target.id} onClick={() => selectTarget(target)} readiness={readiness} />)}
           {!loading && filteredTargets.length === 0 ? <p className="rounded-lg border border-border bg-canvas p-3 text-sm text-muted-foreground">No targets match the current filters.</p> : null}
         </div>
       </aside>
@@ -336,7 +358,7 @@ export function TargetsManager() {
                   <span className="ui-icon"><Server className="size-6" /></span>
                   <span className="break-anywhere">{draft.name || draftId}</span>
                 </h1>
-                <p className="mt-1 max-w-3xl text-sm text-muted-foreground">Create, edit, validate, and launch authorised scans for local/internal AI targets from one operational cockpit.</p>
+                
               </div>
               <div className="ui-action-row justify-start sm:justify-end">
                 <Button variant="secondary" onClick={() => void loadJobs()} className="w-full sm:w-auto"><RefreshCw /> <span>Refresh jobs</span></Button>
@@ -418,13 +440,13 @@ export function TargetsManager() {
   );
 }
 
-function TargetListItem({ target, active, onClick }: { target: TargetRecord; active: boolean; onClick: () => void }) {
-  const health = targetHealth(target);
+function TargetListItem({ target, active, onClick, readiness }: { target: TargetRecord; active: boolean; onClick: () => void; readiness: ReadinessMap }) {
+  const health = targetReadiness(target.id, readiness);
   return (
     <button onClick={onClick} className={cn("w-full rounded-lg border p-3 text-left transition-colors", active ? "border-primary bg-muted" : "border-border bg-canvas hover:bg-muted")}>
       <div className="flex items-start justify-between gap-2">
         <span className="break-anywhere font-semibold leading-snug">{target.config.name || target.id}</span>
-        <StatusPill status={health} />
+        <StatusPill ready={health.ready} reason={health.reason} />
       </div>
       <p className="mt-1 break-anywhere text-xs text-muted-foreground">{target.id} · {target.config.type} · {target.config.environment || "local"}</p>
       <p className="mt-1 truncate font-mono text-[11px] text-muted-foreground" title={endpointLabel(target.config)}>{endpointLabel(target.config)}</p>
@@ -462,9 +484,18 @@ function ChecklistItem({ label, ok }: { label: string; ok: boolean }) {
   return <div className="flex items-center justify-between gap-2 rounded-lg border border-border bg-canvas px-3 py-2 text-sm"><span className="break-anywhere">{label}</span>{ok ? <CheckCircle2 className="size-4 shrink-0 text-[var(--sev-low)]" /> : <AlertTriangle className="size-4 shrink-0 text-[var(--sev-medium)]" />}</div>;
 }
 
-function StatusPill({ status }: { status: ReturnType<typeof targetHealth> }) {
-  const labels = { ready: "ready", "needs-owner": "owner", "needs-auth": "auth", external: "external" };
-  return <span className={cn("shrink-0 rounded px-2 py-0.5 text-[10px] font-bold uppercase", status === "ready" ? "bg-[var(--accent-sage)] text-[#1b2110]" : "bg-muted text-muted-foreground")}>{labels[status]}</span>;
+function StatusPill({ ready, reason }: { ready: boolean; reason: string }) {
+  return (
+    <span
+      title={ready ? "Ready to scan" : reason}
+      className={cn(
+        "shrink-0 rounded px-2 py-0.5 text-[10px] font-bold uppercase",
+        ready ? "bg-[var(--accent-sage)] text-[#1b2110]" : "bg-muted text-muted-foreground",
+      )}
+    >
+      {ready ? "ready" : "not ready"}
+    </span>
+  );
 }
 
 function JobRow({ job }: { job: ScanJob }) {

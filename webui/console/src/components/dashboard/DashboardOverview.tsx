@@ -47,14 +47,9 @@ export function DashboardOverview({
 
   return (
     <div className="space-y-4 animate-fade-in">
-      <div>
-        <h2 className="font-sans text-lg font-extrabold tracking-tight text-foreground">
-          AI Security Posture
-        </h2>
-        <p className="text-sm text-muted-foreground">
-          Executive overview across repositories, images, agents, and RAG systems.
-        </p>
-      </div>
+      <h2 className="font-sans text-lg font-extrabold tracking-tight text-foreground">
+        AI Security Posture
+      </h2>
 
       <KpiGrid metrics={metrics} />
 
@@ -75,7 +70,7 @@ export function DashboardOverview({
                 <ChartEmpty
                   icon={TrendingDown}
                   message="No trend data yet"
-                  hint="Run scans over time to chart how findings are burned down."
+                  hint="Chart appears once scans accumulate."
                 />
               )}
             </div>
@@ -96,7 +91,7 @@ export function DashboardOverview({
               <ChartEmpty
                 icon={PieChart}
                 message="No findings to distribute"
-                hint="Severity breakdown appears once a scan returns findings."
+                hint="Appears once a scan returns findings."
               />
             )}
           </CardContent>

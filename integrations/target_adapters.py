@@ -150,14 +150,25 @@ def _load_safety_profile(name: str) -> dict[str, Any]:
 
     The profile is consulted several times per outbound request; re-reading and
     re-parsing the YAML each time was both wasteful and leaked file handles.
+
+    Fails closed. A profile that cannot be read, or a target naming a profile
+    the file does not define, raises instead of yielding an empty mapping —
+    silently dropping the limits a safety profile exists to impose is the one
+    outcome worse than refusing to run.
     """
     path = _safety_profiles_path()
     try:
         stamp = os.stat(path).st_mtime_ns
     except OSError:
+        if name:
+            raise ValueError(f"safety profile '{name}' is unavailable: cannot read {path}") from None
         return {}
     profiles = _safety_profiles_cached(path, stamp)
-    return profiles.get(name, {})
+    if not name:
+        return {}
+    if name not in profiles:
+        raise ValueError(f"safety profile '{name}' is not defined in {path}")
+    return profiles[name]
 
 
 @lru_cache(maxsize=8)
@@ -165,10 +176,16 @@ def _safety_profiles_cached(path: str, _stamp: int) -> dict[str, dict[str, Any]]
     try:
         with open(path, encoding="utf-8") as handle:
             data = yaml.safe_load(handle) or {}
-    except OSError:
+    except OSError as exc:
+        raise ValueError(f"safety profiles are unreadable: {path}") from exc
+    except yaml.YAMLError as exc:
+        raise ValueError(f"safety profiles are malformed: {path}") from exc
+    profiles = data.get("safety_profiles")
+    if profiles is None:
         return {}
-    profiles = data.get("safety_profiles") or {}
-    return profiles if isinstance(profiles, dict) else {}
+    if not isinstance(profiles, dict):
+        raise ValueError(f"safety_profiles in {path} must be a mapping of profile name to settings")
+    return profiles
 
 
 def _environment_allowed_hosts() -> set[str]:

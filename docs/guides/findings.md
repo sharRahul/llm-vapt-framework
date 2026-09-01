@@ -108,6 +108,28 @@ Each completed scan produces:
 They are written under the configured output root and downloaded through the
 API, which serves only the artefacts a job actually produced.
 
+## Raw evidence
+
+Alongside the report artefacts, each scan writes an `evidence-index.json`
+listing every raw request/response artefact its findings recorded, with the
+provenance of the finding that produced it. The index is what makes the raw
+material reachable:
+
+| Route | Returns |
+| --- | --- |
+| `GET /api/scans/{id}/evidence` | The whole index for a scan. |
+| `GET /api/scans/{id}/evidence/{finding_id}` | One finding's entry and its artefact list. |
+| `GET /api/scans/{id}/evidence/{finding_id}/{artifact_id}` | One artefact's redacted contents. |
+
+Only paths already recorded in the index can be read, and only when they resolve
+inside the deployment's evidence root, so an artefact reference in a request
+cannot escape it. The routes require the same permission as artifact download,
+and the response passes through the same redaction as every other API payload.
+
+In the console, the finding detail pane carries a collapsed **Raw evidence**
+section listing each artefact; opening one shows the captured request and
+response.
+
 ## Related
 
 - [Assessment assurance](../security/assurance.md) — what these findings do and do not claim.

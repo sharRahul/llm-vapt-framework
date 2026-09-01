@@ -63,7 +63,7 @@ def test_windows_release_package_contains_desktop_and_docker_lab_launchers(tmp_p
 
 
 def test_release_workflow_produces_signed_attested_bundle() -> None:
-    workflow = Path(".github/workflows/release-build.yml").read_text(encoding="utf-8")
+    workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
     assert "workflow_dispatch:" in workflow
     assert "signing_mode:" in workflow
     assert "actions/attest-build-provenance@v2" in workflow

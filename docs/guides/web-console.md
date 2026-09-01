@@ -89,6 +89,12 @@ Launcher/local mode is for loopback laptop/workstation use. For shared/internal-
 
 The hosted React console now consumes `/api/scans/{scan_id}/events` with `EventSource` for persisted live progress. The target workspace shows stream state, latest phase, progress, event timeline, finding count, completion, and error states. Finding remediation/status APIs are available under `/api/scans/{scan_id}/findings/...`; mutations require authentication and CSRF protection and create persistent history/audit records.
 
+While a run is not finished, the header shows a **Stop** control next to **Run Scan**. Stopping is a safety control, not a convenience: it ends the run after the request already in flight, and the result is recorded as `cancelled` rather than `failed`. The scanned-asset card names the actual outcome — completed, cancelled, timed out, or failed — because a run an operator stopped and a run the target rejected call for different next steps.
+
+## Reading a finding
+
+The finding detail pane leads with the badges that decide how much weight the finding carries: severity, risk score, provenance (**Observed**, **Inferred**, or **AI-assisted**), and triage status. Below the explanation, a collapsed **Raw evidence** section lists the request/response artefacts the scan captured; opening one shows the exact exchange with the target. See [Findings and evidence](findings.md) for what each field means and what it does not claim.
+
 ## Related
 
 - [HTTP API reference](../reference/api.md) — every endpoint the console uses.

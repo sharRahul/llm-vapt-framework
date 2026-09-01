@@ -19,6 +19,11 @@ from urllib.parse import unquote, urlparse
 import yaml
 
 from core import runtime_targets
+from core.cancellation import CancellationRegistry, ScanCancelled, ScanTimedOut
+from core.config_validation import ConfigurationError, require_valid_config
+from core.evidence_index import read_artifact as read_evidence_artifact
+from core.evidence_index import write_index as write_evidence_index
+from core.scan_state import InvalidScanTransition, ScanRunState, is_terminal
 from core.scanner import Scanner
 from dashboards.generate_dashboard import DashboardGenerator
 from dashboards.html_dashboard import HtmlDashboardGenerator
@@ -62,7 +67,7 @@ AUDIT_LOG = logging.getLogger("vulnoraiq.audit")
 STATIC_DIR = Path(__file__).parent / "static"
 CONFIG_ROOT = Path(os.getenv("VULNORAIQ_CONFIG_DIR", "config"))
 OUTPUT_ROOT = Path(os.getenv("VULNORAIQ_WEB_OUTPUT_ROOT", "reports/output/webui"))
-TERMINAL_STATES = {"completed", "failed"}
+TERMINAL_STATES = {state.value for state in ScanRunState if is_terminal(state)}
 RUNTIME_TARGET_ID_RE = runtime_targets.TARGET_ID_RE
 AUTH_MANAGER = WebAuthManager(os.getenv("VULNORAIQ_WEB_USERS_PATH", str(CONFIG_ROOT / "web_users.yaml")))
 JOB_STORE: JobStore = create_job_store()
@@ -73,10 +78,12 @@ MAX_CONCURRENT_SCANS = int(os.getenv("VULNORAIQ_MAX_CONCURRENT_SCANS", "5"))
 SCAN_QUEUE_LIMIT = int(os.getenv("VULNORAIQ_SCAN_QUEUE_LIMIT", "20"))
 SCAN_SLOT_WAIT_SECONDS = float(os.getenv("VULNORAIQ_SCAN_SLOT_WAIT_SECONDS", "900"))
 SSE_MAX_STREAM_SECONDS = float(os.getenv("VULNORAIQ_SSE_MAX_STREAM_SECONDS", "3600"))
+SCAN_BUDGET_SECONDS = float(os.getenv("VULNORAIQ_SCAN_BUDGET_SECONDS", "1800"))
 
 _active_scans: set[str] = set()
 _queued_scans: set[str] = set()
 _active_scans_lock = threading.Condition()
+CANCELLATIONS = CancellationRegistry()
 
 
 def _env_flag(name: str, default: str = "false") -> bool:
@@ -187,33 +194,114 @@ def _release_scan_slot(job_id: str) -> None:
         _active_scans_lock.notify()
 
 
-def _fail_job(job_id: str, message: str) -> None:
-    def fail(item: PersistedScanJob) -> None:
-        item.status = "failed"
-        item.error = message
-        item.completed_at = datetime.now(timezone.utc).isoformat()
-        item.add_event("failed", message, 100, level="error")
+#: Progress reported for each non-terminal state, so the console has a number to
+#: render without inventing one per call site.
+_STATE_PROGRESS: dict[ScanRunState, int] = {
+    ScanRunState.QUEUED: 0,
+    ScanRunState.RUNNING: 5,
+    ScanRunState.ANALYSING: 90,
+}
 
-    JOB_STORE.update(job_id, fail)
+#: The stream stage each state reports as. Cancelled and timed-out runs stay on
+#: the existing terminal ``scan_failed`` event type so clients keep working; the
+#: precise state travels in the event payload rather than in a new event type.
+_STATE_STAGE: dict[ScanRunState, str] = {
+    ScanRunState.QUEUED: "queued",
+    ScanRunState.RUNNING: "scan_started",
+    ScanRunState.ANALYSING: "phase_started",
+    ScanRunState.COMPLETED: "completed",
+    ScanRunState.FAILED: "failed",
+    ScanRunState.CANCELLED: "failed",
+    ScanRunState.TIMED_OUT: "failed",
+}
+
+
+def _transition_job(
+    job_id: str,
+    target: ScanRunState,
+    *,
+    actor: str = "system",
+    reason: str = "",
+    message: str = "",
+    progress: int | None = None,
+    level: str = "info",
+) -> PersistedScanJob | None:
+    """Move a job to ``target`` and record the move as an observable event.
+
+    Every status change goes through here: the transition table rejects an
+    illegal move, and the stream gains a ``state_changed`` event so the console
+    never has to infer the state from prose.
+    """
+
+    def apply(item: PersistedScanJob) -> None:
+        item.apply_transition(target.value, actor=actor, reason=reason)
+        if target is ScanRunState.RUNNING and not item.started_at:
+            item.started_at = datetime.now(timezone.utc).isoformat()
+        if is_terminal(target):
+            item.completed_at = datetime.now(timezone.utc).isoformat()
+            if target is not ScanRunState.COMPLETED:
+                item.error = reason or message or target.value
+        item.add_event(
+            _STATE_STAGE.get(target, "state_changed"),
+            message or reason or f"Scan state is now {target.value}.",
+            100 if is_terminal(target) else _STATE_PROGRESS.get(target, item.progress),
+            level=level,
+            data={"state": target.value, "actor": actor, "reason": reason},
+        )
+
+    try:
+        return JOB_STORE.update(job_id, apply)
+    except InvalidScanTransition:
+        # The run already reached a terminal state — a cancel that raced a
+        # completion, for example. The stored record stays authoritative.
+        LOGGER.info("scan_transition_rejected job_id=%s target=%s", job_id, target.value)
+        return JOB_STORE.get(job_id)
+
+
+def _fail_job(
+    job_id: str, message: str, state: ScanRunState = ScanRunState.FAILED, actor: str = "system"
+) -> None:
+    _transition_job(job_id, state, actor=actor, reason=message, message=message, progress=100, level="error")
+
+
+def reconcile_interrupted_scans() -> list[str]:
+    """Fail jobs stranded by a previous process, so none stays `running` forever."""
+    recovered = JOB_STORE.reconcile_interrupted("interrupted by a server restart")
+    if recovered:
+        LOGGER.warning("scan_jobs_reconciled count=%d ids=%s", len(recovered), ",".join(recovered))
+    return recovered
 
 
 def run_scan_job(job_id: str) -> None:
+    # Adopt the token registered when the job was admitted: a cancel issued
+    # while the run was still queued must survive the worker starting.
+    cancellation = CANCELLATIONS.get_or_create(job_id, budget_seconds=SCAN_BUDGET_SECONDS)
     if not _acquire_scan_slot(job_id):
         metrics.increment("scans_failed")
         LOGGER.error("scan_job_slot_timeout job_id=%s", job_id)
         _fail_job(job_id, "scan did not start: the runner stayed at capacity")
+        CANCELLATIONS.discard(job_id)
         return
     try:
 
         def mutate(fn):
             JOB_STORE.update(job_id, fn)
 
-        def start(job: PersistedScanJob) -> None:
-            job.status = "running"
-            job.started_at = datetime.now(timezone.utc).isoformat()
-            job.add_event("scan_started", "Scan started; loading scanner configuration and selected profile.", 5)
-
-        mutate(start)
+        # An operator can cancel between queueing and starting; honour that
+        # before a single request reaches the target.
+        if cancellation.cancelled:
+            raise ScanCancelled(cancellation.reason)
+        started = _transition_job(
+            job_id,
+            ScanRunState.RUNNING,
+            message="Scan started; loading scanner configuration and selected profile.",
+        )
+        # The transition is refused when the job already reached a terminal
+        # state — a queued run cancelled before a worker claimed it. Never send
+        # traffic for a run the record says is over.
+        if started is None or is_terminal(started.status):
+            LOGGER.info("scan_job_not_started job_id=%s status=%s", job_id, started.status if started else "missing")
+            return
         job = JOB_STORE.get(job_id)
         if not job:
             return
@@ -236,7 +324,15 @@ def run_scan_job(job_id: str) -> None:
             )
         )
         mutate(lambda item: item.add_event("phase_started", "Executing selected safe assessment checks.", 20))
-        result = scanner.scan(target_name=job.target, profile_name=job.profile, authorised=job.authorised)
+        result = scanner.scan(
+            target_name=job.target,
+            profile_name=job.profile,
+            authorised=job.authorised,
+            cancellation=cancellation,
+            job_id=job.id,
+        )
+        cancellation.raise_if_stopped()
+        _transition_job(job_id, ScanRunState.ANALYSING, message="Scoring findings and writing report artefacts.")
         output_dir = OUTPUT_ROOT / job.id
         output_dir.mkdir(parents=True, exist_ok=True)
         markdown_path = MarkdownReportGenerator().generate(result, output_dir / "scan-report.md")
@@ -245,10 +341,9 @@ def run_scan_job(job_id: str) -> None:
         report_data = json.loads(json_path.read_text(encoding="utf-8"))
         dashboard_path = DashboardGenerator().generate_from_report(report_data, output_dir / "dashboard.md")
         html_dashboard_path = HtmlDashboardGenerator().generate_from_report(report_data, output_dir / "dashboard.html")
+        evidence_index = write_evidence_index(job.id, report_data, output_dir)
 
         def complete(item: PersistedScanJob) -> None:
-            item.status = "completed"
-            item.completed_at = datetime.now(timezone.utc).isoformat()
             item.outputs = {
                 "markdown": str(markdown_path),
                 "json": str(json_path),
@@ -273,11 +368,26 @@ def run_scan_job(job_id: str) -> None:
                 "severity_counts": report_data.get("severity_counts", {}),
                 "policy_results": report_data.get("policy_results", []),
                 "findings": report_data.get("findings", []),
+                "evidence_index": evidence_index,
             }
-            item.add_event("completed", "Scan completed and reports are ready.", 100)
 
         mutate(complete)
+        _transition_job(job_id, ScanRunState.COMPLETED, message="Scan completed and reports are ready.")
         metrics.increment("scans_completed")
+    except ScanCancelled as exc:
+        metrics.increment("scans_cancelled")
+        LOGGER.info("scan_cancelled job_id=%s detail=%s", job_id, exc)
+        # Record who asked for the stop, not the thread that noticed it.
+        _fail_job(
+            job_id,
+            str(exc)[:500] or "cancelled by operator",
+            state=ScanRunState.CANCELLED,
+            actor=cancellation.actor or "system",
+        )
+    except ScanTimedOut as exc:
+        metrics.increment("scans_timed_out")
+        LOGGER.warning("scan_timed_out job_id=%s detail=%s", job_id, exc)
+        _fail_job(job_id, str(exc)[:500], state=ScanRunState.TIMED_OUT)
     except (ValueError, PermissionError) as exc:
         metrics.increment("scans_failed")
         LOGGER.warning("scan_rejected job_id=%s detail=%s", job_id, exc)
@@ -287,6 +397,7 @@ def run_scan_job(job_id: str) -> None:
         LOGGER.exception("scan_job_failed job_id=%s", job_id)
         _fail_job(job_id, "internal scan error")
     finally:
+        CANCELLATIONS.discard(job_id)
         _release_scan_slot(job_id)
 
 
@@ -710,6 +821,9 @@ class HostedWebUiHandler(BaseHTTPRequestHandler):
             )
             self._send_json({"finding_state": updated})
             return
+        if len(parts) == 4 and parts[:2] == ["api", "scans"] and parts[3] == "cancel":
+            self._handle_scan_cancel(parts[2], principal, client_ip, request_id, clean_path)
+            return
         if clean_path != "/api/scans":
             self.send_error(HTTPStatus.NOT_FOUND, "Not found")
             return
@@ -730,11 +844,81 @@ class HostedWebUiHandler(BaseHTTPRequestHandler):
                 self._send_error_response(HTTPStatus.TOO_MANY_REQUESTS, "scan queue at capacity")
                 return
         job = JOB_STORE.create(target, profile, authorised, created_by=principal.username)
+        # Register the token before the worker exists so a cancel arriving in
+        # between has somewhere to land.
+        CANCELLATIONS.create(job.id, budget_seconds=SCAN_BUDGET_SECONDS)
         with _active_scans_lock:
             _queued_scans.add(job.id)
         metrics.increment("scans_created")
         threading.Thread(target=run_scan_job, args=(job.id,), daemon=True).start()
         self._send_json(job.to_dict(), status=HTTPStatus.ACCEPTED)
+
+    def _handle_scan_cancel(
+        self, scan_id: str, principal: AuthPrincipal, client_ip: str, request_id: str, clean_path: str
+    ) -> None:
+        """Stop an in-flight run.
+
+        Cancelling is a safety control, so it is gated on the same permission
+        that starts a scan and is audited like any other mutation.
+        """
+        if not csrf_tokens.validate(self._session_key(principal), self.headers.get("X-CSRF-Token")):
+            metrics.increment("csrf_failures")
+            self._send_error_response(HTTPStatus.FORBIDDEN, "invalid or missing CSRF token")
+            return
+        job = JOB_STORE.get(scan_id)
+        if not job:
+            self._send_error_response(HTTPStatus.NOT_FOUND, "scan not found")
+            return
+        if not AUTH_MANAGER.can(principal, "start_configured_scan") or not _can_view_job(principal, job):
+            self._forbidden()
+            return
+        if is_terminal(job.status):
+            self._send_error_response(HTTPStatus.CONFLICT, f"scan already {job.status}")
+            return
+        reason = f"cancelled by {principal.username}"
+        CANCELLATIONS.cancel(scan_id, reason=reason, actor=principal.username)
+        # A queued run has no thread watching its token yet, so record the
+        # terminal state here; a running one ends when its worker unwinds.
+        if job.status == ScanRunState.QUEUED.value:
+            _transition_job(
+                scan_id, ScanRunState.CANCELLED, actor=principal.username, reason=reason, message=reason, level="warning"
+            )
+        audit_event(
+            "scan_cancel", principal, request_id, client_ip, "POST", clean_path, 202, f"scan={scan_id}"
+        )
+        updated = JOB_STORE.get(scan_id)
+        self._send_json(
+            {"scan": updated.to_dict(include_events=False) if updated else {"id": scan_id}, "cancelling": True},
+            status=HTTPStatus.ACCEPTED,
+        )
+
+    def _handle_evidence_get(self, parts: list[str], principal: AuthPrincipal, job: PersistedScanJob) -> None:
+        """Serve the raw evidence index, and one indexed artefact on request."""
+        if not _can_download_job_artifact(principal, job):
+            self._forbidden()
+            return
+        index = job.summary.get("evidence_index") or {"scan_id": job.id, "findings": []}
+        if len(parts) == 4:
+            self._send_json({"evidence": self._redact(index)})
+            return
+        finding_id = parts[4]
+        if len(parts) == 5:
+            entry = next(
+                (item for item in index.get("findings", []) if str(item.get("finding_id")) == finding_id), None
+            )
+            if not entry:
+                self._send_error_response(HTTPStatus.NOT_FOUND, "finding evidence not found")
+                return
+            self._send_json({"evidence": self._redact(entry)})
+            return
+        if len(parts) == 6:
+            artifact = read_evidence_artifact(index, finding_id, parts[5])
+            if not artifact:
+                self._send_error_response(HTTPStatus.NOT_FOUND, "evidence artifact not found")
+                return
+            self._send_json({"evidence": self._redact(artifact)})
+            return
+        self.send_error(HTTPStatus.NOT_FOUND, "Evidence resource not found")
 
     def _handle_scan_get(self, path: str, principal: AuthPrincipal, client_ip: str, request_id: str) -> None:
         parts = [unquote(item) for item in path.split("/") if item]
@@ -753,6 +937,9 @@ class HostedWebUiHandler(BaseHTTPRequestHandler):
             return
         if parts[3] == "findings":
             self._handle_finding_get(parts, principal, job)
+            return
+        if parts[3] == "evidence":
+            self._handle_evidence_get(parts, principal, job)
             return
         if parts[3] == "events":
             if not _can_view_job(principal, job):
@@ -1037,6 +1224,11 @@ def parse_server_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=int(os.getenv("VULNORAIQ_PORT", "8787")))
     parser.add_argument("--production", action="store_true", help="Enable production mode validation")
     parser.add_argument("--skip-production-checks", action="store_true", help="Skip production config validation")
+    parser.add_argument(
+        "--check-config",
+        action="store_true",
+        help="Validate the YAML configuration and exit without starting the server",
+    )
     return parser.parse_args(argv)
 
 
@@ -1053,6 +1245,17 @@ def serve(handler: type[BaseHTTPRequestHandler], argv: list[str] | None = None) 
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
     configure_audit_logging()
+    # Configuration is validated before anything else can consume it: a safety
+    # profile that fails to parse must stop the server, not quietly remove the
+    # limits it was supposed to impose.
+    try:
+        require_valid_config(CONFIG_ROOT)
+    except ConfigurationError as exc:
+        LOGGER.error("config_validation_failed: %s", exc)
+        raise SystemExit(1) from exc
+    if args.check_config:
+        LOGGER.info("config_validation_passed config_dir=%s", CONFIG_ROOT)
+        return
     try:
         AUTH_MANAGER.validate_runtime_auth(args.host)
     except RuntimeError as exc:
@@ -1071,6 +1274,7 @@ def serve(handler: type[BaseHTTPRequestHandler], argv: list[str] | None = None) 
                     LOGGER.error("production_check_failed: %s - %s", result["name"], result.get("detail", ""))
                 raise SystemExit(1)
     start_maintenance_thread()
+    reconcile_interrupted_scans()
     server = create_server(args.host, args.port, handler)
     LOGGER.info("vulnoraiq_web_started host=%s port=%s", args.host, args.port)
     try:

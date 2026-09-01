@@ -174,7 +174,7 @@ export function AgentHost() {
               <h1 className="mt-1 ui-title-row text-2xl font-extrabold">
                 <Cpu className="size-6" /> <span>Hosted Agents</span>
               </h1>
-              <p className="mt-1 max-w-3xl text-sm text-muted-foreground">Deploy, manage, and monitor AI agent containers directly from the WebUI. Agents are auto-registered as scan targets.</p>
+              
             </div>
             <Button variant="secondary" onClick={() => void loadAgents()} className="shrink-0"><RefreshCw /> <span>Refresh</span></Button>
           </div>
@@ -188,7 +188,7 @@ export function AgentHost() {
             {!loading && agents.length === 0 ? (
               <div className="rounded-xl border border-border bg-card p-8 text-center shadow-card">
                 <Server className="mx-auto mb-3 size-10 text-muted-foreground opacity-50" />
-                <p className="text-sm text-muted-foreground">No agents deployed. Use the panel on the right to deploy from a template or custom image.</p>
+                <p className="text-sm text-muted-foreground">No agents deployed.</p>
               </div>
             ) : null}
             <div className="space-y-2">
@@ -231,7 +231,7 @@ export function AgentHost() {
                   <Plus className="size-3.5" /> <span>Add template</span>
                 </Button>
               </div>
-              <p className="mt-1 text-xs text-muted-foreground">Saved agent images you can redeploy; each auto-registers a scan target.</p>
+              <p className="mt-1 text-xs text-muted-foreground">Each deploy auto-registers a scan target.</p>
               <div className="mt-3 space-y-2">
                 {Object.entries(templates).map(([key, tmpl]) => (
                   <div key={key} className="rounded-lg border border-border bg-canvas p-3">
@@ -270,7 +270,7 @@ export function AgentHost() {
 
             <div className="rounded-xl border border-border bg-card p-4 shadow-card">
               <h3 className="ui-title-row font-bold"><Server className="size-4" /> <span>Deploy Custom Image</span></h3>
-              <p className="mt-1 text-xs text-muted-foreground">Deploy any Docker image as a hosted agent. Set the port it listens on to auto-register it as a scannable target.</p>
+              <p className="mt-1 text-xs text-muted-foreground">Set the port it listens on to register it as a target.</p>
               <div className="mt-3 space-y-3">
                 <label className="block">
                   <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Docker image</span>

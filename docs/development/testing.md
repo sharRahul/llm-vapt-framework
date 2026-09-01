@@ -115,17 +115,20 @@ and `/readyz` — a successful build alone is not treated as proof it runs.
 
 ## CI
 
-`.github/workflows/ci.yml` is the single gate on pull requests and `main`:
+`.github/workflows/ci.yml` is the only workflow. Every job is gated on the event
+that should reach it, so nothing runs twice and a push never builds a release.
 
-1. tracked-`.env` check, `pip check`, `pip-audit`
-2. `ruff check`, `mypy`, `pytest` across Python 3.10–3.12
-3. package, mapping, readiness, and assurance validators
-4. console build and the hosted browser flow (3.12 only)
-5. a fixture-target scan producing every report format
-6. a separate job that builds the Docker image and smoke-tests the container
+| Job | Runs on | What it does |
+| --- | --- | --- |
+| `test` | push, PR, release, manual `run: ci`/`release` | tracked-`.env` check, `pip check`, `pip-audit`, `ruff`, `mypy`, `--check-config`, `pytest` across Python 3.10–3.12, the validators, the console build, the hosted browser flow, and a fixture-target scan producing every report format. |
+| `docker` | push, PR, manual `run: ci` | Builds the image, waits for the container health check, and runs the Agent Lab integration tests. |
+| `security` | push, PR, manual `run: ci`/`security` | Trivy filesystem and image scans, SBOMs, and — on `main` and tags — a signed GHCR image. |
+| `atlas-refresh` | weekly schedule, manual `run: atlas` | Validates the MITRE ATLAS mapping and the refresh script. |
+| `python-package`, `publish-*` | release, manual `run: release` | Builds the distribution; publishes only when `publish_to` names a target. |
+| `release-package`, `sign-and-publish` | release, manual `run: release` | Builds, checksums, signs, and attests the platform packages. |
 
-Release, publishing, and supply-chain workflows are separate and manual so they
-do not duplicate this gate.
+A manual run defaults to `run: ci`, so starting the workflow by hand cannot
+accidentally publish anything.
 
 ## Writing tests
 

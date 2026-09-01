@@ -1,6 +1,6 @@
 # Supply-chain pipeline
 
-VulnoraIQ uses `.github/workflows/security-supply-chain.yml` to produce container build evidence, scan reports, SBOM files, and optional signed GHCR images.
+The `security` job in `.github/workflows/ci.yml` produces container build evidence, scan reports, SBOM files, and optional signed GHCR images.
 
 ## When it runs
 

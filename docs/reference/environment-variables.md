@@ -48,6 +48,7 @@ copy it to a local `.env` (which is git-ignored) and edit it there.
 | `VULNORAIQ_MAX_CONCURRENT_SCANS` | Scans allowed to run at once. | Optional | `5` | Positive integer | Scan runner | No |
 | `VULNORAIQ_SCAN_QUEUE_LIMIT` | Scans admitted (running plus waiting) before new requests are refused. | Optional | `20` | Positive integer | Scan runner | No |
 | `VULNORAIQ_SCAN_SLOT_WAIT_SECONDS` | How long a queued scan waits for a runner slot before failing. | Optional | `900` | Positive number | Scan runner | No |
+| `VULNORAIQ_SCAN_BUDGET_SECONDS` | Whole-run budget. A run that exceeds it ends `timed_out`, not `failed`. | Optional | `1800` | Positive number | Scan runner | No |
 | `VULNORAIQ_SSE_MAX_STREAM_SECONDS` | Maximum lifetime of one scan event stream. | Optional | `3600` | Positive number | Web server | No |
 
 ## Storage paths

@@ -1,13 +1,90 @@
+# The single VulnoraIQ workflow.
+#
+# Test, container smoke test, supply-chain security, the weekly ATLAS refresh
+# check, and every release path used to live in five files that repeated the
+# same checkout/setup/validate steps and re-ran the same suite on the same
+# events. They are one workflow here, with each job gated on the event (and, for
+# manual runs, on the `run` input) that should actually reach it.
 name: CI
 
 on:
   push:
     branches: ["main"]
+    tags: ["v*"]
   pull_request:
     branches: ["main"]
+  schedule:
+    # Weekly ATLAS mapping refresh check.
+    - cron: "0 6 * * 1"
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      run:
+        description: "Which jobs to run"
+        required: true
+        type: choice
+        default: ci
+        options:
+          - ci
+          - security
+          - atlas
+          - release
+      publish_to:
+        description: "Where to publish the Python package (run=release only)"
+        required: false
+        type: choice
+        default: "none"
+        options:
+          - none
+          - testpypi
+          - pypi
+      version:
+        description: "Release version or tag name for artifact names (run=release only)"
+        required: false
+        default: "0.2.0"
+      upload_to_release:
+        description: "Upload artifacts to an existing GitHub Release (run=release only)"
+        required: false
+        type: boolean
+        default: false
+      signing_mode:
+        description: "Signing policy for release artifacts"
+        required: false
+        type: choice
+        options:
+          - attestation-only
+          - gpg-if-configured
+          - require-gpg
+        default: gpg-if-configured
+      publish_image:
+        description: "Push the container image to GHCR and sign it with Cosign"
+        required: false
+        type: boolean
+        default: false
+      enforce_security_gate:
+        description: "Fail the run on HIGH/CRITICAL Trivy findings"
+        required: false
+        type: boolean
+        default: false
+      image_tag:
+        description: "Optional image tag for manual runs. Defaults to sha-<commit>."
+        required: false
+        default: ""
+
+# A superseded push to the same branch has nothing left to prove.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
 
 jobs:
+  # --- lint, type check, tests, and the console build -------------------------
   test:
+    name: Test (Python ${{ matrix.python-version }})
+    if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || inputs.run == 'ci' || inputs.run == 'release')
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -47,6 +124,9 @@ jobs:
 
       - name: Type check with mypy
         run: mypy .
+
+      - name: Validate configuration
+        run: python -m webui.server --check-config
 
       - name: Run tests
         run: |
@@ -149,8 +229,10 @@ jobs:
             reports/output/ci-demo-dashboard.md
             reports/output/ci-demo-dashboard.html
 
+  # --- container build and Agent Lab integration ------------------------------
   docker:
     name: Docker image build and smoke test
+    if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || inputs.run == 'ci')
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -201,3 +283,544 @@ jobs:
       - name: Tear down
         if: always()
         run: docker compose down -v
+
+  # --- supply-chain scans, SBOMs, and optional image signing ------------------
+  security:
+    name: Security scans, SBOM, and image signing
+    if: github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || inputs.run == 'ci' || inputs.run == 'security')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+      id-token: write
+      attestations: write
+    env:
+      REPORT_DIR: reports/output/security-supply-chain
+    steps:
+      # Step 1: Check out the exact commit under review so every report maps to one source revision.
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      # Step 2: Prepare a predictable report directory used by every scanner/artifact step.
+      - name: Prepare report directory
+        run: mkdir -p "$REPORT_DIR"
+
+      # Step 3: Resolve lower-case GHCR image names because OCI image references must be lower-case.
+      - name: Resolve container image metadata
+        id: image_meta
+        env:
+          MANUAL_IMAGE_TAG: ${{ inputs.image_tag || '' }}
+        run: |
+          set -euo pipefail
+          repo_lower="${GITHUB_REPOSITORY,,}"
+          image_name="ghcr.io/${repo_lower}"
+          short_sha="${GITHUB_SHA::12}"
+          if [[ -n "${MANUAL_IMAGE_TAG}" ]]; then
+            image_tag="${MANUAL_IMAGE_TAG}"
+          elif [[ "${GITHUB_REF_TYPE:-}" == "tag" ]]; then
+            image_tag="${GITHUB_REF_NAME}"
+          else
+            image_tag="sha-${short_sha}"
+          fi
+          echo "IMAGE_NAME=${image_name}" >> "$GITHUB_ENV"
+          echo "IMAGE_TAG=${image_tag}" >> "$GITHUB_ENV"
+          echo "IMAGE_REF=${image_name}:${image_tag}" >> "$GITHUB_ENV"
+          echo "image_ref=${image_name}:${image_tag}" >> "$GITHUB_OUTPUT"
+          echo "Resolved image: ${image_name}:${image_tag}"
+
+      # Step 4: Enable Buildx so the same workflow can later be extended to multi-arch images.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      # Step 5: Build the image locally for scanning. PRs do not push images or require registry writes.
+      - name: Build local image for scanning
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          push: false
+          tags: ${{ env.IMAGE_REF }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.title=VulnoraIQ
+
+      # Step 6: Run Trivy against the repository filesystem and save SARIF for code scanning.
+      - name: Trivy filesystem scan SARIF
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: sarif
+          output: ${{ env.REPORT_DIR }}/trivy-filesystem.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          scanners: vuln,secret,misconfig
+          exit-code: "0"
+
+      # Step 7: Upload filesystem SARIF to GitHub code scanning when the repository supports it.
+      - name: Upload filesystem SARIF
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: ${{ env.REPORT_DIR }}/trivy-filesystem.sarif
+          category: trivy-filesystem
+
+      # Step 8: Produce a human-readable filesystem scan table for reviewers and release evidence.
+      - name: Trivy filesystem scan table
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: table
+          output: ${{ env.REPORT_DIR }}/trivy-filesystem.txt
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          scanners: vuln,secret,misconfig
+          exit-code: "0"
+
+      # Step 9: Run Trivy against the built container image and save SARIF for code scanning.
+      - name: Trivy image scan SARIF
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.IMAGE_REF }}
+          format: sarif
+          output: ${{ env.REPORT_DIR }}/trivy-image.sarif
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          scanners: vuln,secret,misconfig
+          exit-code: "0"
+
+      # Step 10: Upload image SARIF to GitHub code scanning when the repository supports it.
+      - name: Upload image SARIF
+        if: always()
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: ${{ env.REPORT_DIR }}/trivy-image.sarif
+          category: trivy-image
+
+      # Step 11: Produce a human-readable image scan table for reviewers and release evidence.
+      - name: Trivy image scan table
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.IMAGE_REF }}
+          format: table
+          output: ${{ env.REPORT_DIR }}/trivy-image.txt
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          scanners: vuln,secret,misconfig
+          exit-code: "0"
+
+      # Step 12: Generate an SPDX JSON SBOM for the repository filesystem.
+      - name: Generate filesystem SBOM
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: spdx-json
+          output: ${{ env.REPORT_DIR }}/vulnoraiq-filesystem.spdx.json
+          scanners: vuln
+          exit-code: "0"
+
+      # Step 13: Generate a CycloneDX JSON SBOM for the built container image.
+      - name: Generate image SBOM
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.IMAGE_REF }}
+          format: cyclonedx
+          output: ${{ env.REPORT_DIR }}/vulnoraiq-image.cdx.json
+          scanners: vuln
+          exit-code: "0"
+
+      # Step 14: Optional fail-closed vulnerability gate for release candidates/manual hardening runs.
+      - name: Enforce filesystem vulnerability gate
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.enforce_security_gate }}
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          scanners: vuln,secret,misconfig
+          exit-code: "1"
+
+      # Step 15: Optional fail-closed image vulnerability gate for release candidates/manual hardening runs.
+      - name: Enforce image vulnerability gate
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.enforce_security_gate }}
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ env.IMAGE_REF }}
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          scanners: vuln,secret,misconfig
+          exit-code: "1"
+
+      # Step 16: Decide whether this run should publish and sign a container image.
+      - name: Decide publish policy
+        id: publish_policy
+        run: |
+          set -euo pipefail
+          should_publish="false"
+          if [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            should_publish="true"
+          elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${{ inputs.publish_image }}" == "true" ]]; then
+            should_publish="true"
+          fi
+          echo "should_publish=${should_publish}" >> "$GITHUB_OUTPUT"
+          echo "SHOULD_PUBLISH=${should_publish}" >> "$GITHUB_ENV"
+          echo "Publish image: ${should_publish}"
+
+      # Step 17: Authenticate to GHCR only for publish-capable events, never for pull requests.
+      - name: Login to GitHub Container Registry
+        if: ${{ steps.publish_policy.outputs.should_publish == 'true' }}
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Step 18: Push the already-scanned image to GHCR only after local scan/SBOM generation succeeds.
+      - name: Push scanned image
+        if: ${{ steps.publish_policy.outputs.should_publish == 'true' }}
+        run: docker push "$IMAGE_REF"
+
+      # Step 19: Install Cosign only when signing is needed.
+      - name: Install Cosign
+        if: ${{ steps.publish_policy.outputs.should_publish == 'true' }}
+        uses: sigstore/cosign-installer@v4.1.0
+
+      # Step 20: Sign the pushed image with keyless GitHub OIDC identity.
+      - name: Sign image with Cosign keyless signing
+        if: ${{ steps.publish_policy.outputs.should_publish == 'true' }}
+        run: |
+          set -euo pipefail
+          cosign sign --yes "$IMAGE_REF"
+
+      # Step 21: Verify the signature and save proof as an artifact for release review.
+      - name: Verify Cosign signature
+        if: ${{ steps.publish_policy.outputs.should_publish == 'true' }}
+        run: |
+          set -euo pipefail
+          cosign verify "$IMAGE_REF" \
+            --certificate-identity-regexp "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/ci.yml@.*" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            | tee "$REPORT_DIR/cosign-verify.txt"
+
+      # Step 22: Write a compact job summary so reviewers can understand every output quickly.
+      - name: Write security summary
+        if: always()
+        run: |
+          {
+            echo "## VulnoraIQ security supply-chain summary"
+            echo
+            echo "| Item | Value |"
+            echo "| --- | --- |"
+            echo "| Image | \`${IMAGE_REF}\` |"
+            echo "| Published to GHCR | \`${SHOULD_PUBLISH:-false}\` |"
+            echo "| Filesystem SARIF | \`trivy-filesystem.sarif\` |"
+            echo "| Image SARIF | \`trivy-image.sarif\` |"
+            echo "| Filesystem SBOM | \`vulnoraiq-filesystem.spdx.json\` |"
+            echo "| Image SBOM | \`vulnoraiq-image.cdx.json\` |"
+            echo "| Cosign verification | \`cosign-verify.txt\` when image publishing is enabled |"
+            echo
+            echo "Security artifacts are uploaded under the \`vulnoraiq-security-supply-chain-*\` artifact."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Step 23: Upload all machine-readable and human-readable security outputs.
+      - name: Upload security supply-chain artifacts
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: vulnoraiq-security-supply-chain-${{ github.sha }}
+          path: reports/output/security-supply-chain/**
+          if-no-files-found: warn
+
+  # --- weekly MITRE ATLAS mapping refresh check --------------------------------
+  atlas-refresh:
+    name: ATLAS refresh validation
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.run == 'atlas')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .[dev]
+
+      - name: Validate current ATLAS mapping
+        run: pytest tests/test_mitre_atlas_mapping.py tests/test_atlas_refresh.py
+
+      - name: Refresh ATLAS mapping into temporary file
+        run: |
+          python scripts/refresh_mitre_atlas.py \
+            --source config/mitre_atlas_source_fixture.yaml \
+            --existing config/mitre_atlas_mapping.yaml \
+            --output reports/output/mitre_atlas_mapping.refresh-check.yaml
+
+      - name: Upload refresh check artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: vulnoraiq-atlas-refresh-check
+          path: reports/output/mitre_atlas_mapping.refresh-check.yaml
+
+  # --- Python distribution build ------------------------------------------------
+  python-package:
+    name: Build wheel and source distribution
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.run == 'release')
+    needs: [test]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Install package build tools
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .[release]
+
+      - name: Validate release metadata and readiness
+        run: |
+          python scripts/validate_package_metadata.py
+          python scripts/validate_owasp_atlas_mappings.py
+          python scripts/validate_genai_readiness.py
+          python scripts/validate_production_testing_readiness.py --output-dir reports/output/production-readiness
+
+      - name: Build distributions
+        run: python -m build
+
+      - name: Check distributions
+        run: python -m twine check dist/*
+
+      - name: Upload Python package artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: vulnoraiq-python-package-dist
+          path: dist/*
+          if-no-files-found: error
+
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: [python-package]
+    if: github.event_name == 'workflow_dispatch' && inputs.run == 'release' && inputs.publish_to == 'testpypi'
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v7
+        with:
+          name: vulnoraiq-python-package-dist
+          path: dist
+
+      - name: Publish package distributions to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          packages-dir: dist/
+          skip-existing: true
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [python-package]
+    if: github.event_name == 'workflow_dispatch' && inputs.run == 'release' && inputs.publish_to == 'pypi'
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v7
+        with:
+          name: vulnoraiq-python-package-dist
+          path: dist
+
+      - name: Publish package distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+
+  # --- desktop release packages -------------------------------------------------
+  release-package:
+    name: Build ${{ matrix.platform }} release package
+    if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.run == 'release')
+    needs: [test]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            os: windows-latest
+            extension: zip
+          - platform: linux
+            os: ubuntu-latest
+            extension: tar.gz
+          - platform: macos
+            os: macos-latest
+            extension: dmg
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Set up Node for React console build
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+
+      - name: Resolve release version
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            echo "VULNORAIQ_RELEASE_VERSION=${{ github.event.release.tag_name }}" >> "$GITHUB_ENV"
+          else
+            echo "VULNORAIQ_RELEASE_VERSION=${{ inputs.version }}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Install release build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .[dev,release]
+
+      - name: Build React console assets
+        run: |
+          cd webui/console
+          npm ci
+          npm run build
+
+      - name: Validate release metadata and readiness
+        run: |
+          python scripts/validate_package_metadata.py
+          python scripts/validate_owasp_atlas_mappings.py
+          python scripts/validate_genai_readiness.py
+          python scripts/validate_production_testing_readiness.py --output-dir reports/output/production-readiness
+
+      - name: Build platform package
+        run: |
+          python scripts/build_platform_release_package.py --platform ${{ matrix.platform }} --version "$env:VULNORAIQ_RELEASE_VERSION"
+        if: runner.os == 'Windows'
+
+      - name: Build platform package
+        run: |
+          python scripts/build_platform_release_package.py --platform ${{ matrix.platform }} --version "$VULNORAIQ_RELEASE_VERSION"
+        if: runner.os != 'Windows'
+
+      - name: Upload unsigned package for signing job
+        uses: actions/upload-artifact@v7
+        with:
+          name: vulnoraiq-${{ env.VULNORAIQ_RELEASE_VERSION }}-${{ matrix.platform }}
+          path: dist/release/vulnoraiq-${{ env.VULNORAIQ_RELEASE_VERSION }}-${{ matrix.platform }}.${{ matrix.extension }}
+          if-no-files-found: error
+
+  sign-and-publish:
+    name: Sign, attest, and publish release artifacts
+    runs-on: ubuntu-latest
+    needs: [release-package]
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Resolve release version and signing mode
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "release" ]]; then
+            echo "VULNORAIQ_RELEASE_VERSION=${{ github.event.release.tag_name }}" >> "$GITHUB_ENV"
+            echo "VULNORAIQ_SIGNING_MODE=gpg-if-configured" >> "$GITHUB_ENV"
+          else
+            echo "VULNORAIQ_RELEASE_VERSION=${{ inputs.version }}" >> "$GITHUB_ENV"
+            echo "VULNORAIQ_SIGNING_MODE=${{ inputs.signing_mode }}" >> "$GITHUB_ENV"
+          fi
+
+      - name: Download platform artifacts
+        uses: actions/download-artifact@v7
+        with:
+          path: dist/release
+          pattern: vulnoraiq-*
+          merge-multiple: true
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          cd dist/release
+          rm -f SHA256SUMS.txt
+          find . -maxdepth 1 -type f -name "vulnoraiq-${VULNORAIQ_RELEASE_VERSION}-*" | sort | while read -r artifact; do
+            clean="${artifact#./}"
+            sha256sum "$clean" | tee "$clean.sha256" >> SHA256SUMS.txt
+          done
+          cat SHA256SUMS.txt
+
+      - name: Optional GPG detached signatures
+        shell: bash
+        env:
+          RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+          RELEASE_GPG_PASSPHRASE: ${{ secrets.RELEASE_GPG_PASSPHRASE }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${RELEASE_GPG_PRIVATE_KEY}" ]]; then
+            if [[ "${VULNORAIQ_SIGNING_MODE}" == "require-gpg" ]]; then
+              echo "RELEASE_GPG_PRIVATE_KEY is required because signing_mode=require-gpg"
+              exit 1
+            fi
+            echo "No RELEASE_GPG_PRIVATE_KEY configured; skipping detached GPG signatures."
+            exit 0
+          fi
+          export GNUPGHOME="$(mktemp -d)"
+          printf '%s' "${RELEASE_GPG_PRIVATE_KEY}" | gpg --batch --import
+          cd dist/release
+          find . -maxdepth 1 -type f \( -name "vulnoraiq-${VULNORAIQ_RELEASE_VERSION}-*" -o -name "SHA256SUMS.txt" \) \
+            ! -name "*.sha256" ! -name "*.asc" | sort | while read -r artifact; do
+              clean="${artifact#./}"
+              gpg --batch --yes --pinentry-mode loopback --passphrase "${RELEASE_GPG_PASSPHRASE:-}" --armor --detach-sign "$clean"
+            done
+
+      - name: Create GitHub artifact attestation
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/release/*
+
+      - name: Upload signed release bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: vulnoraiq-${{ env.VULNORAIQ_RELEASE_VERSION }}-signed-release
+          path: dist/release/*
+          if-no-files-found: error
+
+      - name: Upload artifacts to GitHub Release
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && inputs.upload_to_release)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          gh release upload "${VULNORAIQ_RELEASE_VERSION}" dist/release/* --clobber

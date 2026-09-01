@@ -426,10 +426,7 @@ export function ProjectImporter({ onTargetsChanged, onRunScan, onNavigate }: Pro
           <div className="min-w-0">
             <p className="text-xs font-bold uppercase tracking-wide text-muted-foreground">Agent Lab</p>
             <h2 className="text-xl font-extrabold">Projects</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Import an AI agent codebase, then deploy it as a working scan target — no manual Docker or target edits.
-              {runMode ? <span className="ml-1 text-xs">Run mode: <span className="font-semibold">{runMode}</span>.</span> : null}
-            </p>
+            {runMode ? <p className="mt-1 text-xs text-muted-foreground">Run mode: <span className="font-semibold">{runMode}</span></p> : null}
           </div>
           <Button size="sm" variant="ghost" onClick={() => void refresh()} disabled={loading}>
             <RefreshCw className={loading ? "size-4 animate-spin" : "size-4"} />
@@ -449,16 +446,14 @@ export function ProjectImporter({ onTargetsChanged, onRunScan, onNavigate }: Pro
           <div className="rounded-lg border border-border bg-canvas px-3 py-2 text-sm text-muted-foreground">{notice}</div>
         ) : null}
 
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {/* Import from a local folder — the primary path. */}
           <div className="rounded-xl border border-border bg-card p-4 shadow-card">
             <div className="mb-2 flex items-center gap-2">
               <FolderUp className="size-4 text-primary" />
               <h3 className="text-sm font-bold">Import from folder</h3>
             </div>
-            <p className="mb-3 text-xs text-muted-foreground">
-              Pick a folder containing your agent. It is packaged in your browser and uploaded — nothing leaves until you choose it.
-            </p>
+            <p className="mb-3 text-xs text-muted-foreground">Packaged in your browser; nothing is sent until you choose.</p>
             <input
               ref={folderInputRef}
               type="file"
@@ -485,7 +480,7 @@ export function ProjectImporter({ onTargetsChanged, onRunScan, onNavigate }: Pro
               <FileArchive className="size-4 text-primary" />
               <h3 className="text-sm font-bold">Import ZIP archive</h3>
             </div>
-            <p className="mb-3 text-xs text-muted-foreground">Upload a prepared agent archive. VulnoraIQ checks its size and safe paths before extracting it.</p>
+            <p className="mb-3 text-xs text-muted-foreground">Size and paths are checked before extracting.</p>
             <input ref={archiveInputRef} type="file" accept=".zip,application/zip" className="hidden" onChange={(e) => e.target.files?.[0] && void importArchive(e.target.files[0])} />
             <Button variant="outline" size="sm" disabled={busy === "archive"} onClick={() => archiveInputRef.current?.click()}>
               {busy === "archive" ? <Loader2 className="size-4 animate-spin" /> : <FileArchive className="size-4" />}
@@ -525,7 +520,7 @@ export function ProjectImporter({ onTargetsChanged, onRunScan, onNavigate }: Pro
             <h3 className="text-sm font-bold">Imported projects</h3>
             <span className="text-xs text-muted-foreground">{projects.length} total</span>
           </div>
-          <p className="mb-2 text-xs text-muted-foreground">Mapped projects are read-only. Refresh after changing the configured projects folder.</p>
+          <p className="mb-2 text-xs text-muted-foreground">Mapped projects are read-only.</p>
           <Button size="sm" variant="ghost" onClick={() => void refresh()} disabled={loading}>
             <RefreshCw className={loading ? "size-4 animate-spin" : "size-4"} />
             <span>Refresh mapped folders</span>
@@ -538,7 +533,7 @@ export function ProjectImporter({ onTargetsChanged, onRunScan, onNavigate }: Pro
               <FolderUp className="mx-auto mb-2 size-6 text-muted-foreground" />
               <p className="text-sm font-semibold">No projects yet</p>
               <p className="mx-auto mt-1 max-w-sm text-xs text-muted-foreground">
-                Import a folder or clone a Git repository above to start analysing an agent.
+                Import a folder or clone a repository above.
               </p>
             </div>
           ) : (

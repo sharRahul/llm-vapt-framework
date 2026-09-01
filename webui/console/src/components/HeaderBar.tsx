@@ -7,6 +7,7 @@ import {
   PanelsTopLeft,
   Server,
   Play,
+  Square,
   ShieldHalf,
   Sun,
 } from "lucide-react";
@@ -15,7 +16,7 @@ import { cn } from "@/lib/utils";
 
 export type ConsoleView = "overview" | "workspace" | "targets" | "agents" | "projects";
 
-interface HeaderBarProps {
+export interface HeaderBarProps {
   view: ConsoleView;
   onChangeView: (view: ConsoleView) => void;
   theme: "light" | "dark";
@@ -26,6 +27,8 @@ interface HeaderBarProps {
   scanFindingCount?: number;
   scanDisabled?: boolean;
   onToggleScan: () => void;
+  onCancelScan?: () => void;
+  cancelling?: boolean;
   targets?: { id: string; label: string; ready?: boolean }[];
   selectedTarget?: string;
   onSelectTarget?: (id: string) => void;
@@ -42,6 +45,8 @@ export function HeaderBar({
   scanFindingCount = 0,
   scanDisabled = false,
   onToggleScan,
+  onCancelScan,
+  cancelling = false,
   targets = [],
   selectedTarget = "",
   onSelectTarget,
@@ -127,6 +132,14 @@ export function HeaderBar({
               ))}
             </select>
           </label>
+        ) : null}
+
+        {scanning && onCancelScan ? (
+          // Stopping traffic to a target is a safety control, so the control is
+          // reachable for as long as the run is not finished.
+          <Button variant="secondary" size="sm" onClick={onCancelScan} disabled={cancelling} className="shrink-0" title="Stop this scan">
+            <Square className="size-4" /> <span>{cancelling ? "Stopping…" : "Stop"}</span>
+          </Button>
         ) : null}
 
         <Button variant="primary" size="sm" onClick={onToggleScan} disabled={scanning || scanDisabled} className="shrink-0" title={scanDisabled ? "No targets configured. Add a target in the Targets view first." : "Run a scan"}>

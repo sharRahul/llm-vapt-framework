@@ -32,6 +32,27 @@ python scripts/validate_runtime_production_config.py
 vulnoraiq-web --host 127.0.0.1 --port 8787
 ```
 
+### Configuration validation
+
+Every start validates the YAML configuration before anything can consume it and
+exits with the full list of problems if it cannot be trusted. A safety profile
+that fails to parse stops the server rather than quietly removing the limits it
+was supposed to impose, and a target naming a profile the file does not define is
+refused at scan time.
+
+Check a deployment's configuration without starting a server:
+
+```bash
+python -m webui.server --check-config
+```
+
+### Restart recovery
+
+A scan runs on a thread inside the server process, so a restart strands anything
+in flight. On startup, any job left in a non-terminal state is moved to `failed`
+with `"interrupted by a server restart"`. Nothing stays `running` forever, and
+the reconciliation is logged as `scan_jobs_reconciled`.
+
 ## 2. Health checks
 
 | Check | Command or URL |
@@ -51,6 +72,20 @@ vulnoraiq-web --host 127.0.0.1 --port 8787
 ```bash
 docker compose exec vulnoraiq-web vulnoraiq targets validate --target local_mock_agent
 ```
+
+### Stop a running scan
+
+An operator who realises they have the wrong target must be able to act on it.
+From the console, use **Stop** in the header while a scan is running; from the
+API:
+
+```bash
+curl -X POST "$BASE/api/scans/$SCAN_ID/cancel" -H "X-CSRF-Token: $CSRF"
+```
+
+The run stops after the request already in flight and ends `cancelled`, which is
+recorded distinctly from `failed`. A run that exceeds
+`VULNORAIQ_SCAN_BUDGET_SECONDS` ends `timed_out`.
 
 ### Run a scan
 

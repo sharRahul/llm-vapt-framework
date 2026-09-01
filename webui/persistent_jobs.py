@@ -11,6 +11,8 @@ from pathlib import Path
 from threading import RLock
 from typing import Any, Protocol, runtime_checkable
 
+from core.scan_state import ScanRunState, is_terminal, transition
+
 
 @dataclass(slots=True)
 class PersistedScanEvent:
@@ -41,8 +43,37 @@ class PersistedScanJob:
     events: list[PersistedScanEvent] = field(default_factory=list)
     outputs: dict[str, str] = field(default_factory=dict)
     summary: dict[str, Any] = field(default_factory=dict)
+    transitions: list[dict[str, Any]] = field(default_factory=list)
 
-    def add_event(self, stage: str, message: str, progress: int, level: str = "info") -> None:
+    def apply_transition(self, target: str, actor: str = "system", reason: str = "") -> str:
+        """Move the run to ``target``, recording the move as a first-class row.
+
+        Raises :class:`core.scan_state.InvalidScanTransition` when the move is
+        illegal, so a bad status assignment fails loudly instead of corrupting
+        the record.
+        """
+        previous = self.status
+        state = transition(previous, target)
+        self.status = state.value
+        self.transitions.append(
+            {
+                "from_state": str(previous),
+                "to_state": state.value,
+                "at": datetime.now(timezone.utc).isoformat(),
+                "actor": actor,
+                "reason": reason,
+            }
+        )
+        return state.value
+
+    def add_event(
+        self,
+        stage: str,
+        message: str,
+        progress: int,
+        level: str = "info",
+        data: dict[str, Any] | None = None,
+    ) -> None:
         self.progress = progress
         etype = {
             "queued": "scan_queued",
@@ -50,6 +81,8 @@ class PersistedScanJob:
             "target_validation": "target_validated",
             "completed": "scan_completed",
             "failed": "scan_failed",
+            "cancelled": "scan_failed",
+            "timed_out": "scan_failed",
             "finding": "finding_created",
             "evidence": "evidence_saved",
             "report": "report_written",
@@ -70,6 +103,7 @@ class PersistedScanJob:
                 "scan_completed",
                 "scan_failed",
                 "heartbeat",
+                "state_changed",
             }
             else "phase_started",
         )
@@ -83,7 +117,7 @@ class PersistedScanJob:
                 event_id=len(self.events) + 1,
                 type=etype,
                 phase=stage,
-                data={},
+                data=dict(data or {}),
             )
         )
 
@@ -96,7 +130,7 @@ class PersistedScanJob:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PersistedScanJob:
         events = [PersistedScanEvent(**event) for event in data.get("events", [])]
-        data = {**data, "events": events}
+        data = {**data, "events": events, "transitions": list(data.get("transitions") or [])}
         return cls(**data)
 
 
@@ -152,6 +186,8 @@ class JobStore(Protocol):
     ) -> dict[str, Any] | None: ...
 
     def finding_history(self, scan_id: str, finding_id: str) -> builtins.list[dict[str, Any]]: ...
+
+    def reconcile_interrupted(self, reason: str) -> builtins.list[str]: ...
 
 
 class PersistentJobStore:
@@ -252,6 +288,27 @@ class PersistentJobStore:
             if entry.get("finding_id") == finding_id
         ]
 
+    def reconcile_interrupted(self, reason: str) -> builtins.list[str]:
+        """Fail every job left mid-run by a process that no longer exists.
+
+        A non-terminal row at boot belongs to a thread that died with the last
+        process, so leaving it ``running`` strands it forever.
+        """
+        recovered: builtins.list[str] = []
+        with self._lock:
+            jobs = self._load_all()
+            for job_id, job in jobs.items():
+                if is_terminal(job.status):
+                    continue
+                job.apply_transition(ScanRunState.FAILED.value, actor="system", reason=reason)
+                job.error = reason
+                job.completed_at = datetime.now(timezone.utc).isoformat()
+                job.add_event("failed", reason, 100, level="error")
+                recovered.append(job_id)
+            if recovered:
+                self._save_all(jobs)
+        return recovered
+
     def _load_all(self) -> dict[str, PersistedScanJob]:
         if not self.path.exists():
             return {}
@@ -268,7 +325,7 @@ class PersistentJobStore:
 class SqliteJobStore:
     """SQLite-backed scan job store for production use."""
 
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 3
 
     def __init__(self, path: str | Path = "reports/output/webui/jobs.db") -> None:
         self.path = Path(path)
@@ -336,6 +393,16 @@ class SqliteJobStore:
                 timestamp TEXT NOT NULL,
                 note TEXT
             );
+            CREATE TABLE IF NOT EXISTS scan_transitions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+                from_state TEXT NOT NULL,
+                to_state TEXT NOT NULL,
+                at TEXT NOT NULL,
+                actor TEXT NOT NULL DEFAULT 'system',
+                reason TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS idx_scan_transitions_job_id ON scan_transitions(job_id);
             CREATE INDEX IF NOT EXISTS idx_events_job_id ON events(job_id);
             CREATE INDEX IF NOT EXISTS idx_jobs_created_at ON jobs(created_at);
         """)
@@ -410,6 +477,8 @@ class SqliteJobStore:
         )
         for ev in job.events:
             self._insert_event(job.id, ev)
+        for item in job.transitions:
+            self._insert_transition(job.id, item)
         self._conn.commit()
 
     def _update_job(self, job: PersistedScanJob) -> None:
@@ -432,6 +501,11 @@ class SqliteJobStore:
         ).fetchone()[0]
         for ev in job.events[stored:]:
             self._insert_event(job.id, ev)
+        stored_transitions = self._conn.execute(
+            "SELECT COUNT(*) FROM scan_transitions WHERE job_id = ?", (job.id,)
+        ).fetchone()[0]
+        for item in job.transitions[stored_transitions:]:
+            self._insert_transition(job.id, item)
         self._conn.commit()
 
     def _insert_event(self, job_id: str, ev: PersistedScanEvent) -> None:
@@ -447,6 +521,19 @@ class SqliteJobStore:
                 ev.type,
                 ev.phase,
                 json.dumps(ev.data, sort_keys=True),
+            ),
+        )
+
+    def _insert_transition(self, job_id: str, item: dict[str, Any]) -> None:
+        self._conn.execute(
+            "INSERT INTO scan_transitions (job_id, from_state, to_state, at, actor, reason) VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                job_id,
+                str(item.get("from_state", "")),
+                str(item.get("to_state", "")),
+                str(item.get("at", "")),
+                str(item.get("actor", "system")),
+                str(item.get("reason", "")),
             ),
         )
 
@@ -472,6 +559,13 @@ class SqliteJobStore:
             ],
             outputs=json.loads(row["outputs"] or "{}"),
             summary=json.loads(row["summary"] or "{}"),
+            transitions=[
+                dict(item)
+                for item in self._conn.execute(
+                    "SELECT from_state, to_state, at, actor, reason FROM scan_transitions WHERE job_id = ? ORDER BY id",
+                    (row["id"],),
+                ).fetchall()
+            ],
         )
 
     def list_events_after(self, job_id: str, after_id: int = 0) -> builtins.list[PersistedScanEvent]:
@@ -540,6 +634,24 @@ class SqliteJobStore:
             "SELECT * FROM finding_history WHERE scan_id=? AND finding_id=? ORDER BY id", (scan_id, finding_id)
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def reconcile_interrupted(self, reason: str) -> builtins.list[str]:
+        """Fail every job left mid-run by a process that no longer exists."""
+        recovered: builtins.list[str] = []
+        with self._lock:
+            rows = self._conn.execute("SELECT id, status FROM jobs").fetchall()
+            stranded = [row["id"] for row in rows if not is_terminal(row["status"])]
+            for job_id in stranded:
+                job = self.get(job_id)
+                if job is None:
+                    continue
+                job.apply_transition(ScanRunState.FAILED.value, actor="system", reason=reason)
+                job.error = reason
+                job.completed_at = datetime.now(timezone.utc).isoformat()
+                job.add_event("failed", reason, 100, level="error")
+                self._update_job(job)
+                recovered.append(job_id)
+        return recovered
 
 
 def create_job_store() -> JobStore:

@@ -193,7 +193,23 @@ export interface ConnectivityResult {
   response_preview?: unknown;
 }
 
-export type ScanJobStatus = "queued" | "running" | "completed" | "failed";
+export type ScanJobStatus =
+  | "queued"
+  | "running"
+  | "analysing"
+  | "completed"
+  | "cancelled"
+  | "timed_out"
+  | "failed";
+
+/** One recorded move through the scan run state machine. */
+export interface ScanTransition {
+  from_state: string;
+  to_state: string;
+  at: string;
+  actor: string;
+  reason: string;
+}
 
 export interface ScanEvent {
   event_id: number;
@@ -219,6 +235,28 @@ export interface ScanJob {
   started_at?: string | null;
   completed_at?: string | null;
   error?: string | null;
+  transitions?: ScanTransition[];
+}
+
+/** One raw evidence artefact a scan wrote to disk and indexed for review. */
+export interface EvidenceArtifact {
+  artifact_id: string;
+  name: string;
+  test_id?: string;
+  policy_decision?: string;
+  size_bytes?: number;
+  available?: boolean;
+}
+
+export interface EvidenceEntry {
+  finding_id: string;
+  title?: string;
+  source?: string;
+  confidence?: string;
+  tool?: string;
+  observed_at?: string;
+  limitations?: string;
+  artifacts: EvidenceArtifact[];
 }
 
 export interface FindingMutationState {

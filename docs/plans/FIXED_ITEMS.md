@@ -19,3 +19,8 @@ coverage in the test suite; proposed plans are removed once delivered.
 | F12 | Scan completion interrupted the operator’s work. | Completion refreshes results without switching the current view. |
 | F13 | Scan assets sometimes arrived collapsed. | The navigation pane expands the first asynchronously loaded asset while preserving an explicit collapse. |
 | F14 | Decorative charts entered keyboard navigation. | Recharts accessibility layers are disabled and chart wrappers are hidden from assistive technology; the surrounding summary remains available as text. |
+| F15 | Target readiness disagreed with itself. | The Targets view reads the server's readiness, so a placeholder endpoint is no longer labelled "ready" on the same screen where the scan selector disables it. |
+| F16 | A failed target load looked like an empty configuration. | The console reports the load failure instead of telling the operator to add targets they already have. |
+| F17 | The assistant echoed its prompt and repeated itself. | Explanations are stripped of echoed summary fields and duplicated fragments before they reach the console. |
+| F18 | The raw-evidence panel could hang on "Loading evidence…". | The fetch is keyed on the finding rather than the loading flag, which had made the effect tear down its own request. |
+| F19 | Live scan events showed raw event-type prefixes. | The progress list shows the message only. |

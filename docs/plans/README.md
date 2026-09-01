@@ -19,15 +19,18 @@ the code, the tests, and `CHANGELOG.md`.
 
 | Plan | Addresses | Size |
 | --- | --- | --- |
-| [Scan run lifecycle](scan-run-lifecycle.md) | SM-1, SM-2, SM-7 — no state machine, no cancellation, no restart recovery | Medium |
-| [Finding provenance](finding-provenance.md) | SM-4, SM-8 — provenance is convention, evidence is unreachable | Small–medium |
 | [OIDC / JWT authentication](oidc-jwt-auth.md) | Future identity work; not required for supported deployments | Large |
+
+The scan run lifecycle and finding provenance plans are delivered and therefore
+removed; what they built is recorded under **Delivered** in
+[Still missing](STILL_MISSING.md).
 
 ## Suggested order
 
-1. **Finding provenance** — the product's central claim, currently unenforced.
-2. **Scan run lifecycle** — largest, and the prerequisite for cancellation,
-   approval gates, and resumable runs.
+1. **SM-3 — a tool/scanner contract.** The remaining High item, and the
+   prerequisite for SM-5.
+2. **SM-10 — a frontend test suite.** Small, and what makes console changes safe
+   to review.
 
 `oidc-jwt-auth.md` stays deferred: token and trusted-proxy modes cover every
 deployment VulnoraIQ currently supports.
