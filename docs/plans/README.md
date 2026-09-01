@@ -21,16 +21,18 @@ the code, the tests, and `CHANGELOG.md`.
 | --- | --- | --- |
 | [OIDC / JWT authentication](oidc-jwt-auth.md) | Future identity work; not required for supported deployments | Large |
 
-The scan run lifecycle and finding provenance plans are delivered and therefore
-removed; what they built is recorded under **Delivered** in
+The scan run lifecycle, finding provenance, tool contract, tool-request
+pipeline, and frontend test suite plans are delivered and therefore removed;
+what they built is recorded under **Delivered** in
 [Still missing](STILL_MISSING.md).
 
 ## Suggested order
 
-1. **SM-3 — a tool/scanner contract.** The remaining High item, and the
-   prerequisite for SM-5.
-2. **SM-10 — a frontend test suite.** Small, and what makes console changes safe
-   to review.
+1. **T2 — assistant verbosity.** The only defect still open, and the one an
+   operator meets on every finding. It needs retrieval grounding rather than
+   further prompt cleanup.
+2. **SM-7 — move scan execution to a worker process.** Deliberately waiting for
+   a real concurrency need rather than an anticipated one.
 
 `oidc-jwt-auth.md` stays deferred: token and trusted-proxy modes cover every
 deployment VulnoraIQ currently supports.

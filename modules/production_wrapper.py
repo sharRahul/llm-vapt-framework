@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from core.production_detection import ProductionOwaspDetector
 from core.types import ScanContext
 from modules.base import AssessmentModule
+from modules.contract import ToolContract
 
 
 class ProductionAssessmentModule:
@@ -15,6 +16,11 @@ class ProductionAssessmentModule:
     def __init__(self, module: AssessmentModule) -> None:
         self.module = module
         self.metadata = module.metadata
+
+    @property
+    def contract(self) -> ToolContract:
+        """Detection evidence is added in-process; the wrapped contract stands."""
+        return self.module.contract
 
     def run(self, context: ScanContext, payloads):
         finding = self.module.run(context, payloads)

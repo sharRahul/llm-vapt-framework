@@ -127,6 +127,8 @@ They are not used by VulnoraIQ itself.
 | `VULNORAIQ_LMSTUDIO_BASE_URL` | Default LM Studio base URL. | Optional | `http://host.docker.internal:1234/v1` | URL | Agent Lab | No |
 | `VULNORAIQ_LMSTUDIO_MODEL` | Default LM Studio model name. | Optional | *(empty)* | Model name | Agent Lab | No |
 | `VULNORAIQ_OPENROUTER_MODEL` | Default OpenRouter model name. | Optional | *(empty)* | Model name | Agent Lab | No |
+| `VULNORAIQ_OPENAI_MODEL` | Default OpenAI model name. | Optional | *(empty)* | Model name | Agent Lab | No |
+| `VULNORAIQ_ANTHROPIC_MODEL` | Default Anthropic model name. | Optional | *(empty)* | Model name | Agent Lab | No |
 
 An API key supplied when deploying an agent is passed to that agent's container
 as `OPENAI_API_KEY` (and `OPENROUTER_API_KEY` for OpenRouter). It is **sensitive**

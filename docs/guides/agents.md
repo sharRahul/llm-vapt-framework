@@ -141,6 +141,8 @@ The Agent Lab exposes provider presets for:
 | Ollama | `http://host.docker.internal:11434/v1` |
 | LM Studio | `http://host.docker.internal:1234/v1` |
 | OpenRouter | `https://openrouter.ai/api/v1` |
+| OpenAI | `https://api.openai.com/v1` |
+| Anthropic | `https://api.anthropic.com/v1` |
 | Custom OpenAI-compatible | Operator-provided base URL |
 | Custom environment only | Operator-provided environment variables |
 
@@ -151,6 +153,9 @@ OPENAI_BASE_URL
 OPENAI_API_BASE
 OPENAI_API_KEY
 OPENROUTER_API_KEY
+ANTHROPIC_BASE_URL
+ANTHROPIC_API_KEY
+ANTHROPIC_MODEL
 OLLAMA_HOST
 MODEL
 OPENAI_MODEL

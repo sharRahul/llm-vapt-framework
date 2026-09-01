@@ -175,6 +175,13 @@ jobs:
           npm run build 2>&1 | tee ../../reports/output/ci-logs/webui-build.log
           test ${PIPESTATUS[0]} -eq 0
 
+      - name: Run console component tests
+        if: matrix.python-version == '3.12'
+        run: |
+          cd webui/console
+          npm test 2>&1 | tee ../../reports/output/ci-logs/webui-vitest.log
+          test ${PIPESTATUS[0]} -eq 0
+
       - name: Upload WebUI build logs
         if: always() && matrix.python-version == '3.12'
         uses: actions/upload-artifact@v7
@@ -183,6 +190,7 @@ jobs:
           path: |
             reports/output/ci-logs/webui-npm-ci.log
             reports/output/ci-logs/webui-build.log
+            reports/output/ci-logs/webui-vitest.log
           if-no-files-found: ignore
 
       - name: Install WebUI browser test dependencies

@@ -17,7 +17,7 @@ Open <http://localhost:8787>.
 
 | Area | Current behaviour |
 | --- | --- |
-| Dashboard / overview | Shows high-level security and assessment status using React console data models and live backend scan progress. |
+| Dashboard / overview | Shows high-level security and assessment status, live backend scan progress, and the findings burn-down across the last seven days. Before the first scan the charts are omitted rather than shown empty. |
 | Target management | Loads configured/runtime targets, supports search and environment filters, shows readiness metrics and status pills, validates targets, saves/deletes runtime targets, launches authorised scans, and refreshes recent jobs. Direct LLM, RAG, and agent HTTP endpoints are authored in place (target type, base URL, endpoint path, model, response extraction path, request body template). Targets backed by a deployed Agent Lab container keep their base URL/endpoint locked to the container. |
 | Projects / Agent Lab | The **Projects** console view imports real agent projects by local-folder upload, ZIP upload, Git import, or mapped-folder refresh; configures providers, custom runtime variables, and container ports; builds/runs containers (containerized, hybrid, or external-endpoint modes); and launches authorised scans. Deploying an agent auto-produces a **working** scan target matching its real HTTP contract — including `GET`/query and plain-text responses — on an auto-selected free host port with a run-mode-aware base URL, health-gated before registration. External/hybrid modes require an authorization acknowledgement. |
 | Findings and intelligence | Provides analyst-facing panels for findings, triage context, persisted remediation/status actions, finding history, and assistant-backed analysis. |
@@ -66,8 +66,16 @@ Current future maturity work is focused on enterprise identity, SIEM/SOAR integr
 cd webui/console
 npm install
 npm run typecheck
+npm test
 npm run build
 ```
+
+`npm test` runs the Vitest component suite in `src/**/*.test.{ts,tsx}`. It covers
+the rules that decide what an operator sees — severity and status normalisation,
+risk scoring, the dashboard counters, terminal scan states, triage
+justification, and the empty states — so a regression in any of them fails a
+test rather than a browser session. CI runs it on Python 3.12 alongside the
+console build.
 
 The production build emits assets into `webui/static/console/`. The Python hosted server serves the built console; Node is not required at runtime.
 
@@ -90,6 +98,19 @@ Launcher/local mode is for loopback laptop/workstation use. For shared/internal-
 The hosted React console now consumes `/api/scans/{scan_id}/events` with `EventSource` for persisted live progress. The target workspace shows stream state, latest phase, progress, event timeline, finding count, completion, and error states. Finding remediation/status APIs are available under `/api/scans/{scan_id}/findings/...`; mutations require authentication and CSRF protection and create persistent history/audit records.
 
 While a run is not finished, the header shows a **Stop** control next to **Run Scan**. Stopping is a safety control, not a convenience: it ends the run after the request already in flight, and the result is recorded as `cancelled` rather than `failed`. The scanned-asset card names the actual outcome — completed, cancelled, timed out, or failed — because a run an operator stopped and a run the target rejected call for different next steps.
+
+## The burn-down chart
+
+The **Vulnerability Burn-down Rate** card plots open versus remediated findings
+per day for the last seven days, from `GET /api/trends`. Only runs that finished
+successfully contribute — a cancelled or timed-out run stopped early, so its
+finding count is not a measurement of the target. A day with no completed scan
+carries the previous day's counts forward: the posture did not change because
+nothing was assessed.
+
+Only `fixed` counts as remediated. `accepted_risk`, `false_positive`, and
+`wont_fix` leave "open" but are not repairs, and the chart does not imply
+otherwise.
 
 ## Reading a finding
 

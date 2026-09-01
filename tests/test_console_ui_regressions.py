@@ -27,8 +27,11 @@ def test_dashboard_charts_are_decorative_to_keyboard_and_screen_reader_users() -
 
 
 def test_workspace_shows_structured_finding_provenance() -> None:
-    app = (CONSOLE / "App.tsx").read_text(encoding="utf-8")
+    # The backend-to-console mapping moved out of App.tsx into lib/findings.ts
+    # so the product rules could be unit tested; the provenance fields are
+    # asserted there as well as here.
+    findings = (CONSOLE / "lib/findings.ts").read_text(encoding="utf-8")
     workspace = (CONSOLE / "components/workspace/AnalysisWorkspace.tsx").read_text(encoding="utf-8")
 
-    assert "source: String(finding.source || \"scanner_observed\")" in app
+    assert "source: String(finding.source || \"scanner_observed\")" in findings
     assert "Provenance" in workspace

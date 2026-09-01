@@ -42,7 +42,7 @@ the scan event stream, and `/metrics`.
 | `view_scans` | viewer, analyst, admin | Reading scans, findings, assistant endpoints. |
 | `download_artifacts` | viewer, analyst, admin | Downloading report artefacts for own scans. |
 | `view_all_scans`, `download_all_artifacts` | admin | Other users' scans and artefacts. |
-| `start_configured_scan` | admin | Starting a scan. |
+| `start_configured_scan` | analyst, admin | Starting a scan against an already-configured target. |
 | `manage_runtime` | admin | Targets, agents, Agent Lab, full configuration. |
 
 ## Service
@@ -88,6 +88,13 @@ before the target can ever be scanned.
 | `GET` | `/api/scans/{id}/evidence` | `download_artifacts` | The scan's raw-evidence index. |
 | `GET` | `/api/scans/{id}/evidence/{finding_id}` | `download_artifacts` | One finding's evidence entry. |
 | `GET` | `/api/scans/{id}/evidence/{finding_id}/{artifact_id}` | `download_artifacts` | One indexed artefact's redacted contents. |
+| `GET` | `/api/trends?days=7` | `view_scans` | Findings burn-down across the caller's completed scans: `{"days": 7, "points": [{"date": "2026-09-01", "open": 3, "remediated": 1}]}`. `days` is clamped to 1–90. |
+
+`/api/trends` counts only runs that finished successfully; a cancelled or
+timed-out run stopped early, so its finding count is not a measurement. A day
+with no completed scan carries the previous day's counts forward, and only
+`fixed` counts as remediated — see
+[the burn-down chart](../guides/web-console.md#the-burn-down-chart).
 
 Artefact names come from the job's own output map (`markdown`, `json`, `sarif`,
 `dashboard_markdown`, `dashboard_html`); arbitrary paths are refused. Evidence is

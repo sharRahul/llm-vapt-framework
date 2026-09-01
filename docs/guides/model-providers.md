@@ -20,12 +20,17 @@ variables into that agent's container. It does not proxy or intercept the calls.
 | Ollama (local) | No | `http://host.docker.internal:11434/v1` | `OPENAI_BASE_URL`, `OPENAI_API_BASE`, `OLLAMA_HOST`, `MODEL` |
 | LM Studio (local) | No | `http://host.docker.internal:1234/v1` | `OPENAI_BASE_URL`, `OPENAI_API_BASE`, `MODEL` |
 | OpenRouter (hosted) | Yes | `https://openrouter.ai/api/v1` | `OPENAI_BASE_URL`, `OPENAI_API_BASE`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `MODEL` |
+| OpenAI (hosted) | Yes | `https://api.openai.com/v1` | `OPENAI_BASE_URL`, `OPENAI_API_BASE`, `OPENAI_API_KEY`, `MODEL` |
+| Anthropic (hosted) | Yes | `https://api.anthropic.com/v1` | `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `OPENAI_BASE_URL`, `OPENAI_API_KEY`, `MODEL` |
 | Custom OpenAI-compatible | Optional | *(you supply it)* | `OPENAI_BASE_URL`, `OPENAI_API_BASE`, `OPENAI_API_KEY`, `MODEL` |
 | Custom environment only | No | — | Only the variables you list |
 
 Every preset also sets `OPENAI_MODEL`, `VULNORAIQ_LLM_MODEL`, and
 `VULNORAIQ_LLM_PROVIDER` so agents that read any of those common names work
 without editing.
+
+The Anthropic preset sets both the native and the OpenAI-compatible variables,
+so an agent built on either SDK works without editing.
 
 Defaults for the presets come from the environment — `VULNORAIQ_OLLAMA_BASE_URL`,
 `VULNORAIQ_LMSTUDIO_MODEL` and friends, listed in

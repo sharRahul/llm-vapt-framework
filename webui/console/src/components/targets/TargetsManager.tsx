@@ -65,11 +65,44 @@ function targetReadiness(id: string, readiness: ReadinessMap): { ready: boolean;
   return { ready: entry?.ready !== false, reason: entry?.reason || "" };
 }
 
+function sentenceCase(value: string): string {
+  return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
+}
+
 function endpointLabel(target: TargetConfig): string {
   return target.base_url || target.endpoint || "No endpoint configured";
 }
 
-export function TargetsManager() {
+/**
+ * The editable draft for a target that already exists.
+ *
+ * Spreading a stored record over `defaultTarget()` leaked the scaffolding for a
+ * *new* target onto an existing one: a target configured with `endpoint` and no
+ * `base_url` was shown as `http://127.0.0.1:9090`, and saving would silently
+ * have repointed it somewhere it had never pointed. Structural defaults still
+ * apply; every endpoint-shaped field now comes from the record or is empty.
+ */
+function draftFromRecord(config: TargetConfig): TargetConfig {
+  return {
+    ...defaultTarget(),
+    ...config,
+    // The server accepts `endpoint` as an alias for `base_url`; the form has
+    // one field, so the alias is resolved here rather than silently dropped.
+    base_url: config.base_url || config.endpoint || "",
+    endpoint_path: config.endpoint_path || "/",
+    response_extraction_path: config.response_extraction_path || "",
+    request_body_template: config.request_body_template || {},
+    headers: config.headers || {},
+  };
+}
+
+interface TargetsManagerProps {
+  /** Called after a target is created, changed, or removed, so the shell's
+   *  scan selector reflects it without a page reload. */
+  onTargetsChanged?: () => void;
+}
+
+export function TargetsManager({ onTargetsChanged }: TargetsManagerProps = {}) {
   const [targets, setTargets] = useState<TargetRecord[]>([]);
   const [readiness, setReadiness] = useState<ReadinessMap>({});
   const [selectedId, setSelectedId] = useState("");
@@ -119,7 +152,10 @@ export function TargetsManager() {
     [targets, readiness],
   );
 
-  async function loadTargets() {
+  // `preferredId` keeps the caller's target selected across a reload. Saving a
+  // *new* target used to fall through to `records[0]`, so the editor jumped to
+  // an unrelated target the moment the operator pressed Save.
+  async function loadTargets(preferredId?: string) {
     setLoading(true);
     setError(null);
     try {
@@ -127,7 +163,8 @@ export function TargetsManager() {
       const records = Object.entries(data.targets || {}).map(([id, config]) => ({ id, config }));
       setTargets(records);
       setReadiness(data.readiness || {});
-      const next = records.find((record) => record.id === selectedId) || records[0];
+      const wanted = preferredId || selectedId;
+      const next = records.find((record) => record.id === wanted) || records[0];
       if (next) selectTarget(next);
       else { setSelectedId(""); setDraftId("");
         setDraft(defaultTarget());
@@ -168,9 +205,10 @@ export function TargetsManager() {
   function selectTarget(record: TargetRecord) {
     setSelectedId(record.id);
     setDraftId(record.id);
-    setDraft({ ...defaultTarget(), ...record.config });
-    setHeadersText(JSON.stringify(record.config.headers || {}, null, 2));
-    setBodyText(JSON.stringify(record.config.request_body_template || defaultTarget().request_body_template, null, 2));
+    const next = draftFromRecord(record.config);
+    setDraft(next);
+    setHeadersText(JSON.stringify(next.headers || {}, null, 2));
+    setBodyText(JSON.stringify(next.request_body_template ?? {}, null, 2));
     setConnectivity(null);
   }
 
@@ -198,7 +236,8 @@ export function TargetsManager() {
     setError(null);
     try {
       await apiPost("/api/targets/save", { id: draftId, target: buildTarget() });
-      await loadTargets();
+      await loadTargets(draftId);
+      onTargetsChanged?.();
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc));
     } finally {
@@ -213,6 +252,7 @@ export function TargetsManager() {
     try {
       await apiPost("/api/targets/delete", { id: draftId });
       await loadTargets();
+      onTargetsChanged?.();
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc));
     } finally {
@@ -306,7 +346,9 @@ export function TargetsManager() {
     // verdict the panel showed four green ticks beside a target the list badged
     // "not ready", which is the same target.
     {
-      label: selectedReadiness.ready ? "Scannable" : selectedReadiness.reason || "Not scannable",
+      // The server's reason is a lowercase fragment ("placeholder endpoint");
+      // every other row here is a capitalised phrase.
+      label: selectedReadiness.ready ? "Scannable" : sentenceCase(selectedReadiness.reason) || "Not scannable",
       ok: selectedReadiness.ready,
     },
   ];
@@ -364,7 +406,7 @@ export function TargetsManager() {
                 <Button variant="secondary" onClick={() => void loadJobs()} className="w-full sm:w-auto"><RefreshCw /> <span>Refresh jobs</span></Button>
                 <Button variant="secondary" onClick={testConnectivity} disabled={testing} className="w-full sm:w-auto">{testing ? <Loader2 className="animate-spin" /> : <Wifi />} <span>Test connectivity</span></Button>
                 <Button variant="primary" onClick={saveTarget} disabled={saving} className="w-full sm:w-auto">{saving ? <Loader2 className="animate-spin" /> : <Save />} <span>Save</span></Button>
-                <Button variant="danger" onClick={deleteTarget} disabled={saving} className="w-full sm:w-auto"><Trash2 /> <span>Delete</span></Button>
+                <Button variant="danger" onClick={deleteTarget} disabled={saving || !selected} title={selected ? "Delete this runtime target" : "Nothing to delete until this target is saved"} className="w-full sm:w-auto"><Trash2 /> <span>Delete</span></Button>
               </div>
             </div>
             {selected ? null : <p className="mt-2 text-xs text-muted-foreground">Creating a new runtime target.</p>}

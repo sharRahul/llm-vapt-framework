@@ -185,9 +185,8 @@ def test_proxy_identity_viewer_permissions(monkeypatch) -> None:
     assert manager.can(principal, "download_artifacts")
     assert not manager.can(principal, "start_configured_scan")
     assert not manager.can(principal, "manage_runtime")
-    assert not manager.can(principal, "manage_runtime")
 def test_proxy_identity_analyst_permissions(monkeypatch) -> None:
-    """Analyst role inherits viewer permissions (view + download)."""
+    """Analyst is viewer plus starting an already-configured scan."""
     manager = WebAuthManager()
     principal = manager.authenticate_proxy_identity(
         {"X-Authenticated-User": "analyst-user", "X-VulnoraIQ-Role": "analyst"},
@@ -196,8 +195,10 @@ def test_proxy_identity_analyst_permissions(monkeypatch) -> None:
     assert principal is not None
     assert manager.can(principal, "view_scans")
     assert manager.can(principal, "download_artifacts")
-    assert not manager.can(principal, "start_configured_scan")
+    assert manager.can(principal, "start_configured_scan")
+    # Running a configured scan must not imply changing the configuration.
     assert not manager.can(principal, "manage_runtime")
+    assert not manager.can(principal, "view_all_scans")
 def test_proxy_identity_admin_permissions(monkeypatch) -> None:
     """Admin role has all permissions."""
     manager = WebAuthManager()

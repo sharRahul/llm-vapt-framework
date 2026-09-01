@@ -7,6 +7,7 @@ from typing import Any
 
 import yaml
 
+from core import runtime_targets
 from webui.docker_cli import DockerCommandError, loopback_publish, run_docker
 
 LOGGER = logging.getLogger("vulnoraiq.webui.agent_host")
@@ -100,8 +101,18 @@ class AgentHost:
             if build:
                 ctx = build.get("context", ".")
                 df = build.get("dockerfile", "Dockerfile")
-                LOGGER.info("Building image %s from %s", image_name, ctx)
-                run_docker(["build", "-t", image_name, "-f", df, ctx])
+                # As in Compose, a template's `dockerfile` is relative to its
+                # build context. Passing it through unchanged made `docker
+                # build -f Dockerfile <ctx>` resolve against the server's own
+                # working directory, so every template built VulnoraIQ's root
+                # image instead of the agent's.
+                dockerfile = Path(df)
+                if not dockerfile.is_absolute():
+                    candidate = Path(ctx) / df
+                    if candidate.exists() or not dockerfile.exists():
+                        dockerfile = candidate
+                LOGGER.info("Building image %s from %s using %s", image_name, ctx, dockerfile)
+                run_docker(["build", "-t", image_name, "-f", str(dockerfile), ctx])
         else:
             if not image:
                 raise ValueError("Either template_key or image must be provided")
@@ -165,6 +176,10 @@ class AgentHost:
             run_docker(["rm", "-f", agent["container_id"]])
         except DockerCommandError:
             pass
+        # The scan targets this agent registered point at a container that no
+        # longer exists. Left behind, they still read "ready" in the target list
+        # and the header selector, and only fail once a scan is started.
+        _delete_registered_targets(agent_id, str(agent.get("image") or ""))
         return True
 
     def logs(self, agent_id: str, tail: int = 50) -> str:
@@ -191,6 +206,23 @@ def list_agents() -> list[dict[str, Any]]:
 
 def get_agent(agent_id: str) -> dict[str, Any] | None:
     return _HOST.get_agent(agent_id)
+
+
+def _delete_registered_targets(agent_id: str, image: str) -> int:
+    """Remove the runtime targets a deploy of this agent created.
+
+    Two paths register a target. A custom-image deploy names it after the agent;
+    a template deploy uses the ids the template itself declares, which are not
+    derivable from the agent id — the template is matched by the image the
+    removed container was running.
+    """
+    target_ids = [f"agent-{agent_id}"[:81]]
+    if image:
+        for tmpl in load_templates().values():
+            if str(tmpl.get("image") or "") != image:
+                continue
+            target_ids.extend(str(entry.get("id")) for entry in tmpl.get("targets", []) if entry.get("id"))
+    return runtime_targets.delete_many(sorted(set(target_ids)))
 
 
 def deploy_agent(agent_id: str, template_key: str | None = None, image: str | None = None, env: dict[str, str] | None = None, port: int | None = None) -> dict[str, Any]:

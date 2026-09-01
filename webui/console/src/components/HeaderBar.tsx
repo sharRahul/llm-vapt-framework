@@ -117,14 +117,17 @@ export function HeaderBar({
           <span className="truncate">{scanLabel}</span>
         </span>
 
+        {/* The selector was hidden below the `sm` breakpoint while Run Scan
+            stayed enabled, so a phone-sized operator could start a scan against
+            a target they could not see. It shrinks instead of hiding. */}
         {targets.length > 0 ? (
-          <label className="hidden items-center gap-1.5 sm:inline-flex" title="Target to scan">
+          <label className="inline-flex items-center gap-1.5" title="Target to scan">
             <span className="sr-only">Target to scan</span>
             <select
               value={selectedTarget}
               onChange={(e) => onSelectTarget?.(e.target.value)}
               disabled={scanning}
-              className="input h-8 max-w-[200px] py-0 text-xs"
+              className="input h-8 max-w-[130px] py-0 text-xs sm:max-w-[200px]"
               aria-label="Target to scan"
             >
               {targets.map((t) => (

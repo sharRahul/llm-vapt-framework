@@ -47,7 +47,28 @@ function statusIcon(status: string) {
   return <Loader2 className="size-4 animate-spin text-[var(--sev-medium)]" />;
 }
 
-export function AgentHost() {
+/**
+ * Providers the bundled `http_llm_agent` image can talk to.
+ *
+ * A template deploy previously sent no environment at all, so the bundled agent
+ * always fell back to Ollama on the host: an operator holding an OpenAI or
+ * Anthropic key had no way to deploy it against them from this view.
+ */
+const AGENT_PROVIDERS: Record<string, { label: string; baseUrl: string; needsKey: boolean }> = {
+  ollama: { label: "Ollama (local)", baseUrl: "http://host.docker.internal:11434", needsKey: false },
+  lmstudio: { label: "LM Studio (local)", baseUrl: "http://host.docker.internal:1234/v1", needsKey: false },
+  openai: { label: "OpenAI", baseUrl: "https://api.openai.com", needsKey: true },
+  anthropic: { label: "Anthropic", baseUrl: "https://api.anthropic.com", needsKey: true },
+  openrouter: { label: "OpenRouter", baseUrl: "https://openrouter.ai/api", needsKey: true },
+};
+
+interface AgentHostProps {
+  /** Called after a deploy or removal changes the registered scan targets, so
+   *  the shell's scan selector reflects it without a page reload. */
+  onTargetsChanged?: () => void;
+}
+
+export function AgentHost({ onTargetsChanged }: AgentHostProps = {}) {
   const [agents, setAgents] = useState<AgentRecord[]>([]);
   const [templates, setTemplates] = useState<Record<string, AgentTemplate>>({});
   const [loading, setLoading] = useState(true);
@@ -66,6 +87,10 @@ export function AgentHost() {
   const [tplImage, setTplImage] = useState("");
   const [tplPort, setTplPort] = useState("");
   const [tplEndpoint, setTplEndpoint] = useState("/");
+  const [provider, setProvider] = useState("");
+  const [providerBaseUrl, setProviderBaseUrl] = useState("");
+  const [providerModel, setProviderModel] = useState("");
+  const [providerApiKey, setProviderApiKey] = useState("");
 
   async function saveTemplate() {
     if (!tplKey.trim() || !tplImage.trim()) return;
@@ -110,6 +135,15 @@ export function AgentHost() {
       const body: Record<string, unknown> = { id: agentId };
       if (templateKey) {
         body.template = templateKey;
+        // The bundled agent reads these four names; sending nothing left every
+        // template deploy pointed at the Ollama default.
+        if (provider) {
+          const preset = AGENT_PROVIDERS[provider];
+          const env: Record<string, string> = { LLM_PROVIDER: provider, LLM_BASE_URL: providerBaseUrl.trim() || preset.baseUrl };
+          if (providerModel.trim()) env.LLM_MODEL = providerModel.trim();
+          if (providerApiKey.trim()) env.LLM_API_KEY = providerApiKey.trim();
+          body.env = env;
+        }
       } else {
         body.image = customImage;
         if (customPort.trim()) body.port = customPort.trim();
@@ -127,10 +161,14 @@ export function AgentHost() {
       }
       await apiPost("/api/agents/deploy", body);
       await loadAgents();
+      // A deploy registers a scan target and a removal drops it; the header
+      // selector must not keep offering a container that is gone.
+      onTargetsChanged?.();
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc));
     } finally {
       setDeploying(false);
+      setProviderApiKey("");
       setCustomImage("");
       setCustomEnv("");
       setCustomPort("");
@@ -146,6 +184,7 @@ export function AgentHost() {
       await apiPost(`/api/agents/${encodeURIComponent(agentId)}/${action}`);
       if (action === "remove") setLogsFor(null);
       await loadAgents();
+      if (action === "remove") onTargetsChanged?.();
     } catch (exc) {
       setError(exc instanceof Error ? exc.message : String(exc));
     }
@@ -232,6 +271,43 @@ export function AgentHost() {
                 </Button>
               </div>
               <p className="mt-1 text-xs text-muted-foreground">Each deploy auto-registers a scan target.</p>
+
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <label className="text-xs font-semibold text-muted-foreground">
+                  Model provider
+                  <select
+                    className="input mt-1 text-sm"
+                    value={provider}
+                    onChange={(e) => {
+                      setProvider(e.target.value);
+                      setProviderBaseUrl(AGENT_PROVIDERS[e.target.value]?.baseUrl || "");
+                      setProviderApiKey("");
+                    }}
+                  >
+                    <option value="">Template default</option>
+                    {Object.entries(AGENT_PROVIDERS).map(([key, preset]) => (
+                      <option key={key} value={key}>{preset.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="text-xs font-semibold text-muted-foreground">
+                  Model
+                  <input className="input mt-1 font-mono text-sm" value={providerModel} onChange={(e) => setProviderModel(e.target.value)} placeholder="llama3 / gpt-4o-mini" disabled={!provider} />
+                </label>
+                {provider ? (
+                  <label className="text-xs font-semibold text-muted-foreground sm:col-span-2">
+                    Base URL
+                    <input className="input mt-1 font-mono text-sm" value={providerBaseUrl} onChange={(e) => setProviderBaseUrl(e.target.value)} />
+                  </label>
+                ) : null}
+                {provider && AGENT_PROVIDERS[provider]?.needsKey ? (
+                  <label className="text-xs font-semibold text-muted-foreground sm:col-span-2">
+                    API key
+                    <input type="password" autoComplete="off" className="input mt-1 text-sm" value={providerApiKey} onChange={(e) => setProviderApiKey(e.target.value)} placeholder="sk-…" />
+                  </label>
+                ) : null}
+              </div>
+
               <div className="mt-3 space-y-2">
                 {Object.entries(templates).map(([key, tmpl]) => (
                   <div key={key} className="rounded-lg border border-border bg-canvas p-3">

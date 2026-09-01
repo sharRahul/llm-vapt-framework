@@ -136,9 +136,9 @@ export interface DashboardMetrics {
   };
 }
 
+/** One day of the findings burn-down, as `GET /api/trends` returns it. */
 export interface VulnerabilityTrendPoint {
-  date: string; // e.g. "Jun 18"
-  discovered: number;
+  date: string; // short label, e.g. "30 Aug"
   remediated: number;
   open: number;
 }

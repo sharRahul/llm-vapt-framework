@@ -35,9 +35,17 @@ _VALID_AUTH_MODES = {_AUTH_MODE_LOCAL_ADMIN, _AUTH_MODE_TOKEN, _AUTH_MODE_TRUSTE
 
 _DEFAULT_PERMISSIONS: dict[str, set[str]] = {
     "viewer": {"view_scans", "download_artifacts", "view_own_scans", "download_own_artifacts"},
-    # analyst currently carries the same capabilities as viewer; it exists as a
-    # separate configurable identity, not as an extra permission level.
-    "analyst": {"view_scans", "download_artifacts", "view_own_scans", "download_own_artifacts"},
+    # analyst is viewer plus the one capability the name promises: running a
+    # scan that is already configured. It still cannot change what a target is,
+    # so an analyst can exercise the configuration an admin approved and nothing
+    # beyond it.
+    "analyst": {
+        "view_scans",
+        "download_artifacts",
+        "view_own_scans",
+        "download_own_artifacts",
+        "start_configured_scan",
+    },
     "admin": {
         "view_scans",
         "download_artifacts",

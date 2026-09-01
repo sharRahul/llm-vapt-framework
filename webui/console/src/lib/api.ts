@@ -18,10 +18,32 @@ export class ApiError extends Error {
   }
 }
 
+/**
+ * The message to show for a failed response.
+ *
+ * The API reports failures as `{"error": "..."}`. Using the raw body put the
+ * whole JSON envelope on screen — braces, quotes, and `
+` escapes and all —
+ * which for a Docker build failure meant an unreadable wall of encoded log.
+ */
+function errorMessage(body: string, statusText: string): string {
+  const text = body.trim();
+  if (text.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(text) as { error?: unknown; message?: unknown };
+      const detail = parsed.error ?? parsed.message;
+      if (typeof detail === "string" && detail.trim()) return detail.trim();
+    } catch {
+      // Not JSON after all; the raw text is still better than nothing.
+    }
+  }
+  return text || statusText;
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(path, { credentials: "same-origin", ...options });
   if (!response.ok) {
-    throw new ApiError(response.status, (await response.text()) || response.statusText);
+    throw new ApiError(response.status, errorMessage(await response.text(), response.statusText));
   }
   return (await response.json()) as T;
 }

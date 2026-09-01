@@ -6,6 +6,7 @@ from core.cancellation import CancellationToken
 from core.payload_loader import PayloadLibrary
 from core.risk_scoring import score_findings
 from core.types import Finding, ScanContext
+from modules.contract import ToolContractError
 from modules.registry import ModuleRegistry
 
 
@@ -30,6 +31,27 @@ class TestRunner:
             if cancellation is not None:
                 cancellation.raise_if_stopped()
             module = self.registry.get(module_name)
+            self._enforce_contract(module, context)
             payloads = self.payload_library.for_module(module_name, library_names=library_names)
             findings.append(module.run(context, payloads))
         return score_findings(findings)
+
+    @staticmethod
+    def _enforce_contract(module, context: ScanContext) -> None:
+        """Refuse to run a tool outside the contract it declares.
+
+        A declared contract that nothing checks is documentation. This is the
+        one place a module is about to run, so the availability and
+        target-support claims are settled here, before any request is sent.
+        """
+        contract = module.contract
+        availability = contract.check_availability()
+        if not availability.available:
+            raise ToolContractError(f"{contract.tool_id} cannot run here: {availability.reason}")
+        target_config = context.config.get("targets", {}).get("targets", {}).get(context.target_name) or {}
+        target_type = str(target_config.get("type", "")).strip()
+        if target_type and not contract.supports_target(target_type):
+            raise ToolContractError(
+                f"{contract.tool_id} does not support target type '{target_type}' "
+                f"(declares {list(contract.target_types)})"
+            )

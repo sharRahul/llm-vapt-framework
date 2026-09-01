@@ -7,11 +7,20 @@ from core.mitre_atlas import MitreAtlasMapping
 from core.payload_loader import Payload
 from core.types import Confidence, Finding, FindingSource, ScanContext
 from modules.base import ModuleMetadata
+from modules.contract import ArgumentSpec, ToolContract, contract_for_metadata
 
 
 @dataclass(slots=True)
 class StarterAssessmentModule:
     metadata: ModuleMetadata
+
+    @property
+    def contract(self) -> ToolContract:
+        """Every built-in review sends bounded payloads to the target in-process."""
+        return contract_for_metadata(
+            self.metadata,
+            {"max_payloads": ArgumentSpec("integer", "How many payloads to send to the target.", default=5)},
+        )
 
     def run(self, context: ScanContext, payloads: list[Payload]) -> Finding:
         atlas_mapping = MitreAtlasMapping().techniques_for_module(self.metadata.name)

@@ -29,6 +29,12 @@ export function RemediatedCodeBlock({
     }
   };
 
+  // The rationale is only worth its own heading when it is not already on the
+  // card as the guidance itself.
+  const rationale = (remediation.rationale || "").trim();
+  const rationaleAddsSomething =
+    rationale.length > 0 && rationale !== (remediation.secureCode.code || "").trim() && rationale !== (remediation.summary || "").trim();
+
   const confidenceTone =
     remediation.confidence >= 85
       ? "text-severity-low"
@@ -71,12 +77,17 @@ export function RemediatedCodeBlock({
         </div>
 
         <div className="rounded-md border border-border bg-muted p-3">
-          <p className="text-xs font-bold text-foreground">Why this mitigation helps</p>
-          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-            {remediation.rationale}
-          </p>
-          <p className="mt-2 text-[11px] italic text-muted-foreground">
-            VulnoraIQ provides mitigation guidance only; it does not apply changes to the target. A human owner must implement and verify any change.
+          {/* Most modules use one recommendation string for both the guidance
+              and its rationale, which printed the same sentence twice on the
+              same card. The rationale appears only when it adds something. */}
+          {rationaleAddsSomething ? (
+            <>
+              <p className="text-xs font-bold text-foreground">Why this mitigation helps</p>
+              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">{remediation.rationale}</p>
+            </>
+          ) : null}
+          <p className={cn("text-[11px] italic text-muted-foreground", rationaleAddsSomething && "mt-2")}>
+            Guidance only — VulnoraIQ never changes the target.
           </p>
         </div>
       </div>

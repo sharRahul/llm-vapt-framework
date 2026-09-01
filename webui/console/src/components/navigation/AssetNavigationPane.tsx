@@ -122,11 +122,13 @@ export function AssetNavigationPane({
 
       <div className="flex-1 space-y-2 overflow-y-auto scrollbar-thin p-3">
         {visibleAssets.length === 0 ? (
-          <EmptyState
-            icon={Search}
-            title="No assets match"
-            description="Adjust your filter to see scanned assets."
-          />
+          // Telling an operator to adjust a filter they never set is wrong
+          // advice: with no scan at all, there is nothing to filter.
+          assets.length === 0 ? (
+            <EmptyState icon={Layers} title="No scans yet" description="Run a scan to see its findings here." />
+          ) : (
+            <EmptyState icon={Search} title="No assets match" description="Clear the filter to see every scanned asset." />
+          )
         ) : (
           visibleAssets.map((asset) => (
             <AssetFindingCard

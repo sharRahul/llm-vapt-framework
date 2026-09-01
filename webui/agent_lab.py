@@ -334,6 +334,22 @@ def provider_presets() -> dict[str, dict[str, Any]]:
             "default_model": os.getenv("VULNORAIQ_OPENROUTER_MODEL", ""),
             "env": ["OPENAI_BASE_URL", "OPENAI_API_BASE", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "MODEL"],
         },
+        "openai": {
+            "display_name": "OpenAI cloud",
+            "requires_api_key": True,
+            "default_base_url": "https://api.openai.com/v1",
+            "default_model": os.getenv("VULNORAIQ_OPENAI_MODEL", ""),
+            "env": ["OPENAI_BASE_URL", "OPENAI_API_BASE", "OPENAI_API_KEY", "MODEL"],
+        },
+        "anthropic": {
+            # Agents reach Anthropic through either the native SDK or the
+            # OpenAI-compatible endpoint, so both sets of variables are set.
+            "display_name": "Anthropic cloud",
+            "requires_api_key": True,
+            "default_base_url": "https://api.anthropic.com/v1",
+            "default_model": os.getenv("VULNORAIQ_ANTHROPIC_MODEL", ""),
+            "env": ["ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL", "OPENAI_BASE_URL", "OPENAI_API_KEY", "MODEL"],
+        },
         "openai_compatible": {
             "display_name": "Custom OpenAI-compatible endpoint",
             "requires_api_key": False,
@@ -369,14 +385,20 @@ def _provider_env(provider: dict[str, Any]) -> dict[str, str]:
         env["OPENAI_API_BASE"] = base_url
         if kind == "ollama":
             env["OLLAMA_HOST"] = base_url.removesuffix("/v1")
+        if kind == "anthropic":
+            env["ANTHROPIC_BASE_URL"] = base_url
     if model:
         env["MODEL"] = model
         env["OPENAI_MODEL"] = model
         env["VULNORAIQ_LLM_MODEL"] = model
+        if kind == "anthropic":
+            env["ANTHROPIC_MODEL"] = model
     if api_key:
         env["OPENAI_API_KEY"] = api_key
         if kind == "openrouter":
             env["OPENROUTER_API_KEY"] = api_key
+        if kind == "anthropic":
+            env["ANTHROPIC_API_KEY"] = api_key
     env["VULNORAIQ_LLM_PROVIDER"] = kind
     return env
 

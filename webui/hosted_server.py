@@ -14,7 +14,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 import yaml
 
@@ -23,6 +23,7 @@ from core.cancellation import CancellationRegistry, ScanCancelled, ScanTimedOut
 from core.config_validation import ConfigurationError, require_valid_config
 from core.evidence_index import read_artifact as read_evidence_artifact
 from core.evidence_index import write_index as write_evidence_index
+from core.finding_trends import DEFAULT_WINDOW_DAYS, build_trend
 from core.scan_state import InvalidScanTransition, ScanRunState, is_terminal
 from core.scanner import Scanner
 from dashboards.generate_dashboard import DashboardGenerator
@@ -594,6 +595,20 @@ class HostedWebUiHandler(BaseHTTPRequestHandler):
                     "web_auth_enabled": cfg.get("web_auth_enabled", False),
                 }
             self._send_json(cfg)
+            return
+        if clean_path == "/api/trends":
+            if not AUTH_MANAGER.can(principal, "view_scans"):
+                self._forbidden()
+                return
+            params = parse_qs(urlparse(path).query)
+            try:
+                days = int((params.get("days") or [str(DEFAULT_WINDOW_DAYS)])[0])
+            except ValueError:
+                self._send_error_response(HTTPStatus.BAD_REQUEST, "days must be an integer")
+                return
+            jobs = [job.to_dict(include_events=False) for job in JOB_STORE.list() if _can_view_job(principal, job)]
+            points = build_trend(jobs, days=days)
+            self._send_json({"days": days, "points": [point.to_dict() for point in points]})
             return
         if clean_path == "/api/scans":
             if not AUTH_MANAGER.can(principal, "view_scans"):

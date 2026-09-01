@@ -35,6 +35,8 @@ interface DashboardOverviewProps {
   trend: VulnerabilityTrendPoint[];
   distribution: SeverityDistributionPoint[];
   loading?: boolean;
+  /** False before the first scan, when the charts have nothing to say. */
+  hasScans?: boolean;
 }
 
 export function DashboardOverview({
@@ -42,6 +44,7 @@ export function DashboardOverview({
   trend,
   distribution,
   loading = false,
+  hasScans = true,
 }: DashboardOverviewProps) {
   if (loading) return <SkeletonDashboard />;
 
@@ -53,6 +56,10 @@ export function DashboardOverview({
 
       <KpiGrid metrics={metrics} />
 
+      {/* Before the first scan both charts can only say they are empty, and
+          the view already carries one "no scans yet" call to action. Two more
+          empty cards would say the same thing twice more. */}
+      {!hasScans ? null : (
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader className="flex-row items-center justify-between">
@@ -97,6 +104,7 @@ export function DashboardOverview({
           </CardContent>
         </Card>
       </div>
+      )}
     </div>
   );
 }

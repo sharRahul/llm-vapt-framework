@@ -49,6 +49,9 @@ export function AnalysisWorkspace({
 }: AnalysisWorkspaceProps) {
   const [split, setSplit] = useState(true);
   const [aiExplanation, setAiExplanation] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState(false);
+  const explanation = aiExplanation ?? finding.aiSummary;
+  const isLongExplanation = explanation.length > 240;
   const status = statusStyles[finding.status];
   const provenanceLabel = finding.source === "ai_assisted" ? "AI-assisted" : finding.source === "inferred" ? "Inferred" : "Observed";
 
@@ -57,6 +60,7 @@ export function AnalysisWorkspace({
   useEffect(() => {
     let cancelled = false;
     setAiExplanation(null);
+    setExpanded(false);
     (async () => {
       try {
         const data = await apiPostOptional<{ explanation?: string; backend?: string }>("/api/assistant/explain", {
@@ -114,15 +118,30 @@ export function AnalysisWorkspace({
 
         <div className="mt-3 flex gap-2 rounded-md border border-border bg-[color-mix(in_srgb,var(--accent-slate)_8%,transparent)] p-3">
           <Sparkles className="mt-0.5 size-4 shrink-0 text-[var(--accent-slate)]" />
-          <p className="text-sm leading-relaxed text-foreground">
-            <span className="font-semibold">Finding explanation · </span>
-            {aiExplanation ?? finding.aiSummary}
-            {aiExplanation ? (
-              <span className="ml-1 rounded bg-[var(--accent-slate)]/15 px-1 text-[10px] font-semibold uppercase text-[var(--accent-slate)]">
-                AI
-              </span>
+          <div className="min-w-0">
+            {/* The bundled local model is verbose, and a six-line paragraph
+                pushed the evidence and the mitigation below the fold. Long
+                explanations are clamped to three lines until asked for. */}
+            <p className={cn("text-sm leading-relaxed text-foreground", !expanded && isLongExplanation && "line-clamp-3")}>
+              <span className="font-semibold">Finding explanation · </span>
+              {explanation}
+              {aiExplanation ? (
+                <span className="ml-1 rounded bg-[var(--accent-slate)]/15 px-1 text-[10px] font-semibold uppercase text-[var(--accent-slate)]">
+                  AI
+                </span>
+              ) : null}
+            </p>
+            {isLongExplanation ? (
+              <button
+                type="button"
+                onClick={() => setExpanded((value) => !value)}
+                aria-expanded={expanded}
+                className="mt-1 text-xs font-semibold text-[var(--accent-slate)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                {expanded ? "Show less" : "Show more"}
+              </button>
             ) : null}
-          </p>
+          </div>
         </div>
         <p className="mt-2 text-xs text-muted-foreground">{finding.tool} · {finding.confidence} confidence{finding.observedAt ? ` · observed ${new Date(finding.observedAt).toLocaleString()}` : ""}</p>
       </header>

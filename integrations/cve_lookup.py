@@ -174,11 +174,9 @@ def lookup_for_finding(finding: dict[str, Any], *, limit: int = 5) -> dict[str, 
     if not online:
         note = "CVE lookup unavailable (offline or blocked); could not check public databases."
     elif candidate_novel:
-        note = (
-            "No public CVE/advisory matched these keywords. This may be a configuration or "
-            "novel/zero-day issue, but absence of a match is not proof — a human must verify "
-            "scope and search additional sources before claiming a zero-day."
-        )
+        # The console shows this verbatim beside the banner that already says
+        # "no public CVE matched"; the long form repeated that banner in prose.
+        note = "No match is not proof of none — verify scope before claiming a zero-day."
     else:
         note = f"Matched {len(matches)} public record(s); confirm relevance before citing."
 

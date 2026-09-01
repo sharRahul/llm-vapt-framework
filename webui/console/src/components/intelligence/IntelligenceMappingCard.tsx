@@ -73,19 +73,22 @@ export function IntelligenceMappingCard({
             {mapping.policyStatus.replace("_", " ")}
           </span>
         </Row>
-        <div className="pt-2">
-          <span className="text-xs font-medium text-muted-foreground">Compliance</span>
-          <div className="mt-1.5 flex flex-wrap gap-1.5">
-            {mapping.complianceTags.map((tag) => (
-              <span
-                key={tag}
-                className="rounded-sm border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] font-semibold text-foreground"
-              >
-                {tag}
-              </span>
-            ))}
+        {/* A "Compliance" heading over nothing is a row that says nothing. */}
+        {mapping.complianceTags.length ? (
+          <div className="pt-2">
+            <span className="text-xs font-medium text-muted-foreground">Compliance</span>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {mapping.complianceTags.map((tag) => (
+                <span
+                  key={tag}
+                  className="rounded-sm border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px] font-semibold text-foreground"
+                >
+                  {tag}
+                </span>
+              ))}
+            </div>
           </div>
-        </div>
+        ) : null}
       </CardContent>
     </Card>
   );

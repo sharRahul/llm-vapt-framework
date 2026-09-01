@@ -436,7 +436,7 @@ export function ProjectImporter({ onTargetsChanged, onRunScan, onNavigate }: Pro
 
         <div className="flex items-start gap-2 rounded-lg border border-severity-medium/40 bg-severity-medium/10 px-3 py-2 text-xs text-foreground">
           <ShieldAlert className="mt-0.5 size-4 shrink-0 text-severity-medium" />
-          <p><span className="font-bold">Authorized testing only.</span> Only import, deploy, and scan agents, models, or endpoints you own or are explicitly authorized to test.</p>
+          <p><span className="font-bold">Authorised testing only.</span> Import, deploy, and scan only agents, models, or endpoints you own or are explicitly authorised to test.</p>
         </div>
 
         {error ? (

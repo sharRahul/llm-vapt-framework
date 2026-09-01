@@ -18,7 +18,11 @@ AGENT_PORT = int(_env("AGENT_PORT", "8080"))
 LLM_PROVIDER = _env("LLM_PROVIDER", "ollama").lower()
 LLM_BASE_URL = _env("LLM_BASE_URL", "http://host.docker.internal:11434").rstrip("/")
 LLM_MODEL = _env("LLM_MODEL", "llama3")
-LLM_API_KEY = _env("LLM_API_KEY")
+# Agent Lab injects provider keys under their conventional names; accept those
+# so a key entered in the console reaches the agent without extra wiring.
+LLM_API_KEY = _env("LLM_API_KEY") or _env("OPENAI_API_KEY") or _env("ANTHROPIC_API_KEY")
+ANTHROPIC_VERSION = _env("ANTHROPIC_VERSION", "2023-06-01")
+MAX_TOKENS = int(_env("LLM_MAX_TOKENS", "1024"))
 SYSTEM_PROMPT = _env(
     "SYSTEM_PROMPT",
     "You are an AI assistant running inside an authorised local security assessment lab. "
@@ -95,6 +99,34 @@ def _call_openai_compatible(prompt: str) -> str:
     return json.dumps(data, ensure_ascii=False)
 
 
+def _call_anthropic(prompt: str) -> str:
+    """Anthropic's native Messages API.
+
+    It is not OpenAI-shaped: the key travels in `x-api-key`, the API version is
+    a required header, the system prompt is a top-level field rather than a
+    message, and the reply arrives as a list of content blocks.
+    """
+    headers = {"anthropic-version": ANTHROPIC_VERSION}
+    if LLM_API_KEY:
+        headers["x-api-key"] = LLM_API_KEY
+    data = _post_json(
+        f"{LLM_BASE_URL}/messages" if LLM_BASE_URL.endswith("/v1") else f"{LLM_BASE_URL}/v1/messages",
+        {
+            "model": LLM_MODEL,
+            "max_tokens": MAX_TOKENS,
+            "system": SYSTEM_PROMPT,
+            "messages": [{"role": "user", "content": prompt}],
+        },
+        headers=headers,
+    )
+    blocks = data.get("content")
+    if isinstance(blocks, list):
+        text = "".join(block.get("text", "") for block in blocks if isinstance(block, dict))
+        if text:
+            return text
+    return json.dumps(data, ensure_ascii=False)
+
+
 def _call_http_json(prompt: str) -> str:
     headers = {}
     if LLM_API_KEY:
@@ -110,8 +142,10 @@ def _call_http_json(prompt: str) -> str:
 def invoke_agent(prompt: str) -> str:
     if LLM_PROVIDER == "ollama":
         return _call_ollama(prompt)
-    if LLM_PROVIDER in {"openai", "openai_compatible", "chat_completions"}:
+    if LLM_PROVIDER in {"openai", "openai_compatible", "chat_completions", "openrouter", "lmstudio"}:
         return _call_openai_compatible(prompt)
+    if LLM_PROVIDER == "anthropic":
+        return _call_anthropic(prompt)
     if LLM_PROVIDER in {"http_json", "webhook_json"}:
         return _call_http_json(prompt)
     raise ValueError(f"Unsupported LLM_PROVIDER: {LLM_PROVIDER}")

@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 
 from modules.base import AssessmentModule
+from modules.contract import ToolContract, ToolContractError
 from modules.production_wrapper import wrap_production_modules
 from modules.starter import build_starter_modules
 
@@ -20,6 +21,16 @@ class ModuleRegistry:
             raise ValueError("Module name cannot be empty")
         if name in self._modules:
             raise ValueError(f"Module already registered: {name}")
+        # A module without a usable contract cannot be run safely: nothing would
+        # know its limits, its permissions, or what it can assess. Reject it at
+        # registration rather than discovering it mid-scan.
+        contract = getattr(module, "contract", None)
+        if not isinstance(contract, ToolContract):
+            raise ToolContractError(f"Module '{name}' does not declare a ToolContract")
+        if contract.tool_id != name:
+            raise ToolContractError(
+                f"Module '{name}' declares contract id '{contract.tool_id}'; they must match"
+            )
         self._modules[name] = module
 
     def get(self, name: str) -> AssessmentModule:
@@ -27,6 +38,14 @@ class ModuleRegistry:
             return self._modules[name]
         except KeyError as exc:
             raise KeyError(f"Unknown assessment module: {name}") from exc
+
+    def contract(self, name: str) -> ToolContract:
+        """The declared contract for one module."""
+        return self.get(name).contract
+
+    def contracts(self) -> dict[str, ToolContract]:
+        """Every declared contract, keyed by tool id."""
+        return {name: module.contract for name, module in sorted(self._modules.items())}
 
     def names(self) -> list[str]:
         return sorted(self._modules)
